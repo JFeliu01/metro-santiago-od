@@ -14,6 +14,7 @@ from .clean import (
     inspect_xlsb_matrices,
     load_clean_xlsb_matrix_2023,
 )
+from .dashboard import build_html_dashboard, extract_dashboard_data
 from .describe import compare_schemas, describe_all_datasets, describe_csv_sample
 
 __all__ = [
@@ -34,4 +35,6 @@ __all__ = [
     "load_clean_xlsb_matrix_2023",
     "inspect_xlsb_matrices",
     "export_cleaned_parquet",
+    "extract_dashboard_data",
+    "build_html_dashboard",
 ]

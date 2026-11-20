@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Metro de Santiago &amp; Red Movilidad — Origin-Destination Analytics (2019 vs 2023)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --panel: #111827;
+      --panel-alt: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --metro: #ef4444;
+      --bus: #10b981;
+      --zp: #f59e0b;
+      --metrotren: #a855f7;
+      --accent: #38bdf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-x: hidden;
+    }
+    header {
+      background: linear-gradient(90deg, #0f172a 0%, #1e1b4b 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-badge {
+      background: var(--metro);
+      color: white;
+      font-weight: 800;
+      padding: 6px 10px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+      font-size: 12px;
+    }
+    .brand h1 { font-size: 16px; font-weight: 700; }
+    .brand p { font-size: 12px; color: var(--muted); }
+    .controls-bar {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+    }
+    .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+    .ctrl-group label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    select, input[type="text"], button {
+      background: var(--panel-alt);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    select:focus, input:focus { outline: 1px solid var(--accent); }
+    .mode-pills { display: flex; gap: 5px; flex-wrap: wrap; }
+    .pill {
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 11px;
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      transition: all 0.15s;
+    }
+    .pill.active[data-mode="ALL"] { background: var(--accent); color: #0b0f19; border-color: var(--accent); }
+    .pill.active[data-mode="METRO"] { background: var(--metro); color: white; border-color: var(--metro); }
+    .pill.active[data-mode="BUS"] { background: var(--bus); color: #052e16; border-color: var(--bus); }
+    .pill.active[data-mode="ZONA PAGA"] { background: var(--zp); color: #451a03; border-color: var(--zp); }
+    .pill.active[data-mode="METROTREN"] { background: var(--metrotren); color: white; border-color: var(--metrotren); }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      padding: 14px 20px 6px;
+    }
+    .kpi-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .kpi-title { font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 600; }
+    .kpi-val { font-size: 22px; font-weight: 800; margin: 4px 0; color: var(--text); }
+    .kpi-sub { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; }
+    .badge-delta { padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 11px; }
+    .delta-pos { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .delta-neg { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 14px;
+      padding: 10px 20px 20px;
+    }
+    @media (max-width: 1150px) { .main-grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .card-header {
+      padding: 10px 14px;
+      background: rgba(30, 41, 59, 0.6);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .card-header h2 { font-size: 13px; font-weight: 700; }
+    #map-container { position: relative; width: 100%; height: 590px; }
+    #leaflet-map, #gmap-canvas { width: 100%; height: 100%; }
+    #gmap-canvas { display: none; }
+    .map-legend {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      z-index: 1000;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 11px;
+      pointer-events: auto;
+    }
+    .legend-row { display: flex; align-items: center; gap: 7px; margin-top: 4px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+    .insight-box {
+      padding: 12px 14px;
+      background: rgba(56, 189, 248, 0.08);
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .insight-box h3 { font-size: 12px; color: var(--accent); margin-bottom: 6px; text-transform: uppercase; }
+    .insight-list { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+    .insight-list li::before { content: "▸ "; color: var(--accent); font-weight: bold; }
+
+    .right-col { display: flex; flex-direction: column; gap: 14px; }
+    .chart-box { width: 100%; height: 245px; }
+
+    .table-wrap { max-height: 250px; overflow-y: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid rgba(51, 65, 85, 0.5); }
+    th { position: sticky; top: 0; background: var(--panel-alt); color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    tr:hover { background: rgba(56, 189, 248, 0.08); cursor: pointer; }
+    .mode-tag { padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 10px; }
+
+    /* Modal for Google Maps API key */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 3000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      width: 440px;
+      max-width: 92vw;
+    }
+    .modal h3 { margin-bottom: 8px; font-size: 15px; }
+    .modal p { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+    .modal input { width: 100%; margin-bottom: 12px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="brand-badge">METRO / RED OD</span>
+    <div>
+      <h1>Santiago Origin–Destination &amp; Multi-Modal Demand Workbench (Abril 2019 vs. Abril 2023)</h1>
+      <p>Interactive exploration of validations, estimated destinations, modal share (Metro, Bus, Zona Paga, Metrotren) &amp; half-hourly station profiles</p>
+    </div>
+  </div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <button id="btn-gmap-key" title="Switch between Leaflet Dark Map and Google Maps JS API">🗺️ Google Maps API</button>
+    <button id="btn-reset" style="background:#334155;">↺ Reset Filters</button>
+  </div>
+</header>
+
+<section class="controls-bar">
+  <div class="ctrl-group">
+    <label>Año / Comparación</label>
+    <select id="sel-year">
+      <option value="2023" selected>2023 (17–23 Abril)</option>
+      <option value="2019">2019 (08–14 Abril)</option>
+    </select>
+  </div>
+
+  <div class="ctrl-group">
+    <label>Modo de Transporte</label>
+    <div class="mode-pills" id="mode-pills">
+      <button class="pill active" data-mode="ALL">Todos</button>
+      <button class="pill" data-mode="METRO">Metro</button>
+      <button class="pill" data-mode="BUS">Bus</button>
+      <button class="pill" data-mode="ZONA PAGA">Zona Paga</button>
+      <button class="pill" data-mode="METROTREN">Metrotren</button>
+    </div>
+  </div>
+
+  <div class="ctrl-group">
+    <label>Periodo Horario</label>
+    <select id="sel-period">
+      <option value="ALL" selected>Día Completo (00:00 – 23:30)</option>
+      <option value="PUNTA_MANANA">Punta Mañana (06:00 – 09:30)</option>
+      <option value="FUERA_PUNTA">Fuera de Punta (09:30 – 17:30)</option>
+      <option value="PUNTA_TARDE">Punta Tarde (17:30 – 21:00)</option>
+      <option value="NOCTURNO">Nocturno (21:00 – 06:00)</option>
+    </select>
+  </div>
+
+  <div class="ctrl-group">
+    <label>Propósito Estimado</label>
+    <select id="sel-purpose">
+      <option value="ALL" selected>Todos los Propósitos</option>
+      <option value="TRABAJO">Trabajo</option>
+      <option value="ESTUDIO">Estudio</option>
+      <option value="HOGAR">Hogar (Regreso)</option>
+      <option value="OTROS">Otros</option>
+    </select>
+  </div>
+
+  <div class="ctrl-group">
+    <label>Comuna Foco (Origen o Destino)</label>
+    <select id="sel-commune">
+      <option value="ALL" selected>Todas las Comunas (34)</option>
+    </select>
+  </div>
+
+  <div class="ctrl-group">
+    <label>Dirección de Flujo</label>
+    <select id="sel-direction">
+      <option value="BOTH" selected>Origen ↔ Destino</option>
+      <option value="ORIGIN">Solo Salidas (Origen)</option>
+      <option value="DEST">Solo Llegadas (Destino)</option>
+    </select>
+  </div>
+
+  <div class="ctrl-group">
+    <label>Arcos OD en Mapa: <span id="lbl-topn">35</span></label>
+    <input type="range" id="rng-topn" min="10" max="100" step="5" value="35" />
+  </div>
+</section>
+
+<section class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-title">Viajes Expandidos (Muestra Filtrada)</div>
+    <div class="kpi-val" id="kpi-trips">—</div>
+    <div class="kpi-sub">
+      <span id="kpi-trips-vs">vs 2019: —</span>
+      <span id="kpi-intermodal" style="color:var(--accent);">Intermodal: —%</span>
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-title">Tiempo de Viaje Promedio</div>
+    <div class="kpi-val" id="kpi-time">— min</div>
+    <div class="kpi-sub">
+      <span id="kpi-time-vs">2019: — min</span>
+      <span id="kpi-stages">Etapas prom: —</span>
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-title">Distancia en Ruta Promedio</div>
+    <div class="kpi-val" id="kpi-dist">— km</div>
+    <div class="kpi-sub">
+      <span id="kpi-dist-vs">2019: — km</span>
+      <span id="kpi-speed">Velocidad est: — km/h</span>
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-title">Corredor OD Principal &amp; Modo Dominante</div>
+    <div class="kpi-val" id="kpi-top-od" style="font-size:15px; margin:7px 0;">—</div>
+    <div class="kpi-sub">
+      <span id="kpi-dom-mode">Modo: —</span>
+      <span id="kpi-hub-top">Nodo top: —</span>
+    </div>
+  </div>
+</section>
+
+<main class="main-grid">
+  <!-- Left Column: Interactive Map + Automated Insights -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Mapa Multi-Modal de Flujos Origen–Destino y Nodos (Paraderos / Estaciones)</h2>
+      <div style="display:flex; gap:10px; align-items:center; font-size:11px;">
+        <label><input type="checkbox" id="chk-arcs" checked /> Arcos OD</label>
+        <label><input type="checkbox" id="chk-hubs" checked /> Estaciones / Paraderos</label>
+        <label><input type="checkbox" id="chk-communes" checked /> Centroides Comuna</label>
+      </div>
+    </div>
+    <div id="map-container">
+      <div id="leaflet-map"></div>
+      <div id="gmap-canvas"></div>
+      <div class="map-legend">
+        <div style="font-weight:700; margin-bottom:4px;">Modos &amp; Capas (Click para filtrar)</div>
+        <div class="legend-row"><span class="dot" style="background:var(--metro);"></span> <b>Metro</b> (Estaciones &amp; Flujos)</div>
+        <div class="legend-row"><span class="dot" style="background:var(--bus);"></span> <b>Bus Red</b> (Paraderos &amp; Corredores)</div>
+        <div class="legend-row"><span class="dot" style="background:var(--zp);"></span> <b>Zona Paga</b> (Hubs de Trasbordo)</div>
+        <div class="legend-row"><span class="dot" style="background:var(--metrotren);"></span> <b>Metrotren Nos</b> (Estaciones EFE)</div>
+        <div style="margin-top:6px; color:var(--muted); font-size:10px;">Grosor de arco = Volumen OD | Círculo = Subidas</div>
+      </div>
+    </div>
+    <div class="insight-box">
+      <h3>💡 Insights Automáticos de la Selección Actual</h3>
+      <ul class="insight-list" id="insights-list"></ul>
+    </div>
+  </div>
+
+  <!-- Right Column: Charts & OD Corridor Table -->
+  <div class="right-col">
+    <div class="card">
+      <div class="card-header">
+        <h2>Curva Horaria de Demanda por Media Hora (2023 Sólido vs. 2019 Punteado)</h2>
+        <span style="font-size:11px; color:var(--muted);">Validaciones / Viajes por Modo</span>
+      </div>
+      <div id="chart-halfhour" class="chart-box"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>Perfil Horario de Estaciones de Metro (Matriz Subidas Abril 2023)</h2>
+        <select id="sel-station-profile" style="padding:3px 8px; font-size:11px;"></select>
+      </div>
+      <div id="chart-station" class="chart-box" style="height:205px;"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>Top Corredores Origen–Destino (Click en una fila para enfocar en el mapa)</h2>
+        <span id="tbl-count" style="font-size:11px; color:var(--muted);"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Origen → Destino</th>
+              <th>Modo Inicial</th>
+              <th>Viajes</th>
+              <th>% Intermodal</th>
+              <th>T. Viaje</th>
+              <th>Distancia</th>
+            </tr>
+          </thead>
+          <tbody id="od-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Google Maps API Modal -->
+<div class="modal-backdrop" id="gmap-modal">
+  <div class="modal">
+    <h3>Configurar Google Maps JavaScript API</h3>
+    <p>El dashboard incluye un mapa oscuro interactivo listo para usar (Leaflet + Carto Dark), pero también soporta renderizado nativo sobre <b>Google Maps JS API</b>. Ingresa tu API Key para activar Google Maps (o déjalo vacío para volver a Leaflet):</p>
+    <input type="text" id="inp-gmap-key" placeholder="AIzaSy..." />
+    <div class="modal-actions">
+      <button id="btn-gmap-cancel">Cancelar</button>
+      <button id="btn-gmap-save" style="background:var(--accent); color:#0b0f19; font-weight:700;">Aplicar Motor de Mapa</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = {"sample_rows_per_table":60000,"communes":{"CERRILLOS":{"name":"CERRILLOS","lat":-33.49185,"lon":-70.70819},"CERRO NAVIA":{"name":"CERRO NAVIA","lat":-33.42256,"lon":-70.73951},"CONCHALI":{"name":"CONCHALI","lat":-33.3847,"lon":-70.67599},"EL BOSQUE":{"name":"EL BOSQUE","lat":-33.56326,"lon":-70.67507},"ESTACION CENTRAL":{"name":"ESTACION CENTRAL","lat":-33.4557,"lon":-70.68793},"HUECHURABA":{"name":"HUECHURABA","lat":-33.37303,"lon":-70.64993},"INDEPENDENCIA":{"name":"INDEPENDENCIA","lat":-33.41666,"lon":-70.6609},"LA CISTERNA":{"name":"LA CISTERNA","lat":-33.53249,"lon":-70.66278},"LA FLORIDA":{"name":"LA FLORIDA","lat":-33.53348,"lon":-70.59078},"LA GRANJA":{"name":"LA GRANJA","lat":-33.5409,"lon":-70.62526},"LA PINTANA":{"name":"LA PINTANA","lat":-33.57443,"lon":-70.63778},"LA REINA":{"name":"LA REINA","lat":-33.44922,"lon":-70.55853},"LAS CONDES":{"name":"LAS CONDES","lat":-33.41064,"lon":-70.55934},"LO BARNECHEA":{"name":"LO BARNECHEA","lat":-33.35803,"lon":-70.51593},"LO ESPEJO":{"name":"LO ESPEJO","lat":-33.51698,"lon":-70.69094},"LO PRADO":{"name":"LO PRADO","lat":-33.4512,"lon":-70.71727},"MACUL":{"name":"MACUL","lat":-33.49684,"lon":-70.60851},"MAIPU":{"name":"MAIPU","lat":-33.50599,"lon":-70.76083},"NUNOA":{"name":"NUNOA","lat":-33.46026,"lon":-70.59895},"PEDRO AGUIRRE CERDA":{"name":"PEDRO AGUIRRE CERDA","lat":-33.48566,"lon":-70.67647},"PENALOLEN":{"name":"PENALOLEN","lat":-33.48355,"lon":-70.56133},"PROVIDENCIA":{"name":"PROVIDENCIA","lat":-33.43041,"lon":-70.61467},"PUDAHUEL":{"name":"PUDAHUEL","lat":-33.44724,"lon":-70.75332},"PUENTE ALTO":{"name":"PUENTE ALTO","lat":-33.59032,"lon":-70.57814},"QUILICURA":{"name":"QUILICURA","lat":-33.36285,"lon":-70.7168},"QUINTA NORMAL":{"name":"QUINTA NORMAL","lat":-33.43069,"lon":-70.69787},"RECOLETA":{"name":"RECOLETA","lat":-33.39584,"lon":-70.64422},"RENCA":{"name":"RENCA","lat":-33.40448,"lon":-70.71467},"SAN BERNARDO":{"name":"SAN BERNARDO","lat":-33.59773,"lon":-70.69766},"SAN JOAQUIN":{"name":"SAN JOAQUIN","lat":-33.4949,"lon":-70.62622},"SAN MIGUEL":{"name":"SAN MIGUEL","lat":-33.49581,"lon":-70.65223},"SAN RAMON":{"name":"SAN RAMON","lat":-33.54239,"lon":-70.63722},"SANTIAGO":{"name":"SANTIAGO","lat":-33.4471,"lon":-70.65657},"VITACURA":{"name":"VITACURA","lat":-33.38894,"lon":-70.56735}},"metro_routes":[{"route_id":"L1","route_short_name":"L1","route_long_name":"Línea 1","route_type":1,"route_color":"C8102E"},{"route_id":"L2","route_short_name":"L2","route_long_name":"Línea 2","route_type":1,"route_color":"F2A900"},{"route_id":"L3","route_short_name":"L3","route_long_name":"Línea 3","route_type":1,"route_color":"703F2A"},{"route_id":"L4","route_short_name":"L4","route_long_name":"Línea 4","route_type":1,"route_color":"151F6D"},{"route_id":"L4A","route_short_name":"L4A","route_long_name":"Línea 4A","route_type":1,"route_color":"0072CE"},{"route_id":"L5","route_short_name":"L5","route_long_name":"Línea 5","route_type":1,"route_color":"00965E"},{"route_id":"L6","route_short_name":"L6","route_long_name":"Línea 6","route_type":1,"route_color":"8E3A80"},{"route_id":"MTN","route_short_name":"MTN","route_long_name":"Tren Nos - Estación Central","route_type":0,"route_color":"151CF3"},{"route_id":"MTR","route_short_name":"MTR","route_long_name":"Tren Rancagua - Estación Central","route_type":0,"route_color":"F3B015"}],"stop_hubs":[{"year":"2019","mode":"BUS","name":"T-20-177-PO-20","comuna":"SANTIAGO","service":"T506 00I","lat":-33.45721,"lon":-70.66446,"total":123.3,"pm":0.0,"fp":59.0,"pt":58.5,"avg_stage_min":12.4},{"year":"2019","mode":"BUS","name":"T-32-156-OP-5","comuna":"PENALOLEN","service":"T519 00R","lat":-33.47675,"lon":-70.53869,"total":120.9,"pm":7.4,"fp":68.1,"pt":34.7,"avg_stage_min":23.7},{"year":"2019","mode":"BUS","name":"T-16-136-OP-30","comuna":"LO BARNECHEA","service":"B51 00R","lat":-33.37024,"lon":-70.50898,"total":111.1,"pm":1.3,"fp":104.9,"pt":4.9,"avg_stage_min":26.1},{"year":"2019","mode":"BUS","name":"L-17-4-50-OP","comuna":"LAS CONDES","service":"B52 00I","lat":-33.39607,"lon":-70.50548,"total":95.8,"pm":0.0,"fp":60.2,"pt":34.4,"avg_stage_min":23.1},{"year":"2019","mode":"BUS","name":"L-17-13-10-OP","comuna":"LAS CONDES","service":"B52 00I","lat":-33.40126,"lon":-70.50946,"total":92.3,"pm":4.6,"fp":63.9,"pt":22.6,"avg_stage_min":16.6},{"year":"2019","mode":"BUS","name":"I-13-54-NS-51","comuna":"MAIPU","service":"T369 00R","lat":-33.49028,"lon":-70.75325,"total":82.3,"pm":9.2,"fp":29.0,"pt":37.3,"avg_stage_min":12.1},{"year":"2019","mode":"BUS","name":"E-13-54-SN-10","comuna":"MAIPU","service":"T379 00I","lat":-33.50948,"lon":-70.75721,"total":79.7,"pm":18.9,"fp":42.9,"pt":15.1,"avg_stage_min":20.5},{"year":"2019","mode":"BUS","name":"L-18-24-5-NS","comuna":"NUNOA","service":"T516 00I","lat":-33.4535,"lon":-70.62885,"total":71.7,"pm":32.5,"fp":33.0,"pt":4.7,"avg_stage_min":13.2},{"year":"2019","mode":"BUS","name":"E-20-53-OP-105","comuna":"SANTIAGO","service":"T523 00I","lat":-33.44748,"lon":-70.66701,"total":68.5,"pm":0.0,"fp":30.6,"pt":17.0,"avg_stage_min":21.9},{"year":"2019","mode":"BUS","name":"E-13-278-PO-25","comuna":"MAIPU","service":"T373 00I","lat":-33.51067,"lon":-70.75497,"total":65.2,"pm":5.9,"fp":18.1,"pt":26.7,"avg_stage_min":15.3},{"year":"2019","mode":"BUS","name":"L-17-46-5-SN","comuna":"LAS CONDES","service":"B66 00I","lat":-33.40867,"lon":-70.5448,"total":60.8,"pm":7.5,"fp":27.0,"pt":19.0,"avg_stage_min":19.6},{"year":"2019","mode":"BUS","name":"T-17-140-PO-29","comuna":"LAS CONDES","service":"T430 00I","lat":-33.40952,"lon":-70.5696,"total":54.9,"pm":0.0,"fp":24.0,"pt":27.8,"avg_stage_min":19.2},{"year":"2019","mode":"BUS","name":"L-13-9-25-OP","comuna":"MAIPU","service":"T404 00R","lat":-33.47523,"lon":-70.74076,"total":53.7,"pm":1.1,"fp":24.1,"pt":18.8,"avg_stage_min":8.4},{"year":"2019","mode":"BUS","name":"E-7-302-NS-5","comuna":"ESTACION CENTRAL","service":"T378 00R","lat":-33.45477,"lon":-70.69203,"total":53.4,"pm":0.0,"fp":36.0,"pt":14.7,"avg_stage_min":29.8},{"year":"2019","mode":"BUS","name":"T-14-116-PO-20","comuna":"PROVIDENCIA","service":"T501 00I","lat":-33.43836,"lon":-70.60695,"total":51.6,"pm":2.8,"fp":29.6,"pt":15.3,"avg_stage_min":12.8},{"year":"2019","mode":"BUS","name":"E-20-53-OP-110","comuna":"SANTIAGO","service":"T401 00R","lat":-33.44781,"lon":-70.66825,"total":50.7,"pm":0.0,"fp":24.8,"pt":18.1,"avg_stage_min":24.8},{"year":"2019","mode":"BUS","name":"T-3-13-NS-10","comuna":"HUECHURABA","service":"T467 00I","lat":-33.39094,"lon":-70.61938,"total":48.7,"pm":0.0,"fp":37.7,"pt":11.0,"avg_stage_min":16.9},{"year":"2019","mode":"BUS","name":"T-18-159-NS-25","comuna":"NUNOA","service":"F74 00I","lat":-33.46615,"lon":-70.59854,"total":48.3,"pm":0.0,"fp":27.3,"pt":18.5,"avg_stage_min":23.1},{"year":"2019","mode":"BUS","name":"T-17-141-SN-2","comuna":"LAS CONDES","service":"B52 00R","lat":-33.40694,"lon":-70.54446,"total":47.7,"pm":5.6,"fp":21.0,"pt":18.9,"avg_stage_min":10.7},{"year":"2019","mode":"BUS","name":"L-17-46-5-NS","comuna":"LAS CONDES","service":"T451 00R","lat":-33.40854,"lon":-70.54503,"total":42.4,"pm":0.0,"fp":22.2,"pt":15.4,"avg_stage_min":13.4},{"year":"2019","mode":"BUS","name":"E-18-159-NS-5","comuna":"NUNOA","service":"F74 00I","lat":-33.45538,"lon":-70.59804,"total":42.3,"pm":0.0,"fp":29.3,"pt":9.9,"avg_stage_min":12.3},{"year":"2019","mode":"BUS","name":"T-23-205-SN-65","comuna":"LA PINTANA","service":"T209 00R","lat":-33.56912,"lon":-70.63012,"total":42.2,"pm":0.0,"fp":27.7,"pt":14.5,"avg_stage_min":7.9},{"year":"2019","mode":"METRO","name":"ESTACION CENTRAL","comuna":"ESTACION CENTRAL","service":"METRO","lat":-33.45098,"lon":-70.67917,"total":1637.5,"pm":372.8,"fp":812.4,"pt":431.2,"avg_stage_min":16.9},{"year":"2019","mode":"METRO","name":"SAN JOAQUIN","comuna":"MACUL","service":"METRO","lat":-33.49832,"lon":-70.61603,"total":1444.8,"pm":15.7,"fp":859.1,"pt":437.1,"avg_stage_min":23.5},{"year":"2019","mode":"METRO","name":"REPUBLICA","comuna":"SANTIAGO","service":"METRO","lat":-33.44796,"lon":-70.66757,"total":1383.9,"pm":54.8,"fp":745.1,"pt":345.5,"avg_stage_min":18.5},{"year":"2019","mode":"METRO","name":"LOS HEROES L1","comuna":"SANTIAGO","service":"METRO","lat":-33.44648,"lon":-70.6605,"total":1352.0,"pm":76.7,"fp":740.7,"pt":393.8,"avg_stage_min":18.3},{"year":"2019","mode":"METRO","name":"PLAZA MAIPU","comuna":"MAIPU","service":"METRO","lat":-33.51022,"lon":-70.75624,"total":759.9,"pm":333.5,"fp":266.9,"pt":109.4,"avg_stage_min":32.2},{"year":"2019","mode":"METRO","name":"BAQUEDANO L1","comuna":"PROVIDENCIA","service":"METRO","lat":-33.43719,"lon":-70.63517,"total":747.3,"pm":34.1,"fp":416.3,"pt":233.3,"avg_stage_min":19.7},{"year":"2019","mode":"METRO","name":"UNIVERSIDAD CATOLICA","comuna":"SANTIAGO","service":"METRO","lat":-33.44022,"lon":-70.64055,"total":710.1,"pm":41.4,"fp":417.6,"pt":235.4,"avg_stage_min":16.3},{"year":"2019","mode":"METRO","name":"LOS DOMINICOS","comuna":"LAS CONDES","service":"METRO","lat":-33.40788,"lon":-70.54505,"total":709.9,"pm":225.7,"fp":289.2,"pt":176.9,"avg_stage_min":26.8},{"year":"2019","mode":"METRO","name":"UNIVERSIDAD DE SANTIAGO","comuna":"ESTACION CENTRAL","service":"METRO","lat":-33.4529,"lon":-70.68616,"total":699.1,"pm":134.6,"fp":424.7,"pt":114.4,"avg_stage_min":19.6},{"year":"2019","mode":"METRO","name":"MANQUEHUE","comuna":"LAS CONDES","service":"METRO","lat":-33.40885,"lon":-70.56725,"total":684.5,"pm":220.4,"fp":281.3,"pt":158.7,"avg_stage_min":23.5},{"year":"2019","mode":"METRO","name":"PEDRO DE VALDIVIA","comuna":"PROVIDENCIA","service":"METRO","lat":-33.42547,"lon":-70.61428,"total":679.3,"pm":65.1,"fp":371.2,"pt":211.3,"avg_stage_min":22.7},{"year":"2019","mode":"METRO","name":"LA CISTERNA L2","comuna":"LA CISTERNA","service":"METRO","lat":-33.53772,"lon":-70.66408,"total":614.1,"pm":298.3,"fp":248.8,"pt":57.9,"avg_stage_min":24.9},{"year":"2019","mode":"METRO","name":"MANUEL MONTT","comuna":"PROVIDENCIA","service":"METRO","lat":-33.42835,"lon":-70.61921,"total":610.3,"pm":34.6,"fp":375.5,"pt":163.4,"avg_stage_min":19.7},{"year":"2019","mode":"METRO","name":"LAS REJAS","comuna":"LO PRADO","service":"METRO","lat":-33.45716,"lon":-70.70597,"total":605.2,"pm":280.1,"fp":248.6,"pt":67.9,"avg_stage_min":16.6},{"year":"2019","mode":"METRO","name":"SANTA LUCIA","comuna":"SANTIAGO","service":"METRO","lat":-33.44285,"lon":-70.64582,"total":584.3,"pm":86.9,"fp":316.6,"pt":159.6,"avg_stage_min":16.8},{"year":"2019","mode":"METRO","name":"VESPUCIO NORTE","comuna":"RECOLETA","service":"METRO","lat":-33.38063,"lon":-70.64604,"total":580.9,"pm":210.8,"fp":268.6,"pt":84.8,"avg_stage_min":25.9},{"year":"2019","mode":"METRO","name":"LOS LEONES L1","comuna":"PROVIDENCIA","service":"METRO","lat":-33.42227,"lon":-70.60969,"total":570.3,"pm":70.7,"fp":273.9,"pt":212.1,"avg_stage_min":20.6},{"year":"2019","mode":"METRO","name":"ESCUELA MILITAR","comuna":"LAS CONDES","service":"METRO","lat":-33.41432,"lon":-70.58444,"total":538.9,"pm":156.6,"fp":244.7,"pt":123.6,"avg_stage_min":21.2},{"year":"2019","mode":"METRO","name":"PLAZA DE PUENTE ALTO","comuna":"PUENTE ALTO","service":"METRO","lat":-33.60955,"lon":-70.5759,"total":501.7,"pm":284.3,"fp":179.1,"pt":38.2,"avg_stage_min":40.0},{"year":"2019","mode":"METRO","name":"HOSPITALES","comuna":"INDEPENDENCIA","service":"METRO","lat":-33.41766,"lon":-70.65637,"total":494.7,"pm":40.7,"fp":305.6,"pt":138.5,"avg_stage_min":21.5},{"year":"2019","mode":"METRO","name":"CAMINO AGRICOLA","comuna":"MACUL","service":"METRO","lat":-33.49159,"lon":-70.61754,"total":490.7,"pm":42.9,"fp":238.6,"pt":153.6,"avg_stage_min":21.4},{"year":"2019","mode":"METRO","name":"INES DE SUAREZ","comuna":"PROVIDENCIA","service":"METRO","lat":-33.43888,"lon":-70.60776,"total":461.9,"pm":41.7,"fp":262.4,"pt":131.1,"avg_stage_min":20.9},{"year":"2019","mode":"METROTREN","name":"Estacion Alameda","comuna":"ESTACION CENTRAL","service":"METROTREN","lat":-33.45224,"lon":-70.68062,"total":585.8,"pm":28.2,"fp":276.7,"pt":232.5,"avg_stage_min":15.5},{"year":"2019","mode":"METROTREN","name":"Estacion Lo Valledor","comuna":"ESTACION CENTRAL","service":"METROTREN","lat":-33.47709,"lon":-70.68063,"total":224.5,"pm":32.1,"fp":90.2,"pt":97.4,"avg_stage_min":11.7},{"year":"2019","mode":"METROTREN","name":"Estacion San Bernardo","comuna":"SANTIAGO","service":"METROTREN","lat":-33.59449,"lon":-70.69788,"total":154.0,"pm":70.5,"fp":59.4,"pt":22.7,"avg_stage_min":15.3},{"year":"2019","mode":"METROTREN","name":"Estacion Lo Blanco","comuna":"SANTIAGO","service":"METROTREN","lat":-33.57321,"lon":-70.6984,"total":113.2,"pm":59.1,"fp":47.9,"pt":6.1,"avg_stage_min":12.5},{"year":"2019","mode":"METROTREN","name":"Estacion Nos","comuna":"SANTIAGO","service":"METROTREN","lat":-33.63276,"lon":-70.7048,"total":111.4,"pm":62.8,"fp":35.8,"pt":9.4,"avg_stage_min":19.6},{"year":"2019","mode":"METROTREN","name":"Estacion Maestranza","comuna":"SANTIAGO","service":"METROTREN","lat":-33.60686,"lon":-70.69698,"total":93.9,"pm":57.5,"fp":24.7,"pt":10.2,"avg_stage_min":16.7},{"year":"2019","mode":"METROTREN","name":"Estacion Cinco Pinos","comuna":"SANTIAGO","service":"METROTREN","lat":-33.62365,"lon":-70.70078,"total":81.0,"pm":43.2,"fp":30.6,"pt":7.1,"avg_stage_min":18.8},{"year":"2019","mode":"METROTREN","name":"Estacion Freire","comuna":"SANTIAGO","service":"METROTREN","lat":-33.58642,"lon":-70.69848,"total":64.8,"pm":30.7,"fp":28.1,"pt":6.0,"avg_stage_min":14.3},{"year":"2019","mode":"METROTREN","name":"Estacion Lo Espejo","comuna":"SANTIAGO","service":"METROTREN","lat":-33.51416,"lon":-70.6858,"total":54.9,"pm":19.3,"fp":24.0,"pt":10.2,"avg_stage_min":7.5},{"year":"2019","mode":"METROTREN","name":"Estacion Pedro Aguirre Cerda","comuna":"PEDRO AGUIRRE CERDA","service":"METROTREN","lat":-33.49308,"lon":-70.6818,"total":19.6,"pm":6.1,"fp":8.8,"pt":4.7,"avg_stage_min":5.8},{"year":"2019","mode":"ZONA PAGA","name":"I-26-228-SN-25","comuna":"LA CISTERNA","service":"T301 C0 00I","lat":-33.53847,"lon":-70.66355,"total":559.8,"pm":16.6,"fp":237.9,"pt":218.3,"avg_stage_min":18.5},{"year":"2019","mode":"ZONA PAGA","name":"T-18-156-OP-38","comuna":"NUNOA","service":"T506 00R","lat":-33.46456,"lon":-70.59722,"total":404.3,"pm":10.2,"fp":212.9,"pt":162.8,"avg_stage_min":15.9},{"year":"2019","mode":"ZONA PAGA","name":"I-33-134-SN-67","comuna":"LA FLORIDA","service":"T322 00I","lat":-33.51903,"lon":-70.59844,"total":323.7,"pm":4.5,"fp":157.6,"pt":133.8,"avg_stage_min":22.3},{"year":"2019","mode":"ZONA PAGA","name":"T-18-156-PO-27","comuna":"NUNOA","service":"T519 00I","lat":-33.46215,"lon":-70.60885,"total":253.0,"pm":93.7,"fp":124.7,"pt":31.1,"avg_stage_min":7.4},{"year":"2019","mode":"ZONA PAGA","name":"T-6-280-NS-5","comuna":"QUILICURA","service":"T307 C0 00R","lat":-33.36549,"lon":-70.68981,"total":199.1,"pm":1.2,"fp":108.6,"pt":89.2,"avg_stage_min":15.7},{"year":"2019","mode":"ZONA PAGA","name":"E-18-156-OP-5","comuna":"NUNOA","service":"T506 00R","lat":-33.46913,"lon":-70.57637,"total":195.5,"pm":74.8,"fp":106.6,"pt":14.1,"avg_stage_min":8.2},{"year":"2019","mode":"ZONA PAGA","name":"E-13-54-NS-85","comuna":"MAIPU","service":"T405 00R","lat":-33.50999,"lon":-70.75733,"total":194.1,"pm":3.5,"fp":61.4,"pt":109.0,"avg_stage_min":17.3},{"year":"2019","mode":"ZONA PAGA","name":"I-26-228-NS-3","comuna":"LA CISTERNA","service":"T248 00R","lat":-33.51733,"lon":-70.65898,"total":193.6,"pm":3.5,"fp":84.1,"pt":87.3,"avg_stage_min":17.8},{"year":"2019","mode":"ZONA PAGA","name":"T-34-270-SN-45","comuna":"PUENTE ALTO","service":"F14 00I","lat":-33.5769,"lon":-70.58201,"total":183.7,"pm":4.3,"fp":75.0,"pt":91.1,"avg_stage_min":11.9},{"year":"2019","mode":"ZONA PAGA","name":"T-18-156-PO-37","comuna":"NUNOA","service":"T516 00I","lat":-33.46472,"lon":-70.59702,"total":179.2,"pm":1.2,"fp":86.5,"pt":85.5,"avg_stage_min":9.5},{"year":"2019","mode":"ZONA PAGA","name":"E-18-156-PO-80","comuna":"NUNOA","service":"T506 00I","lat":-33.46925,"lon":-70.5764,"total":162.2,"pm":18.3,"fp":91.2,"pt":47.2,"avg_stage_min":12.7},{"year":"2019","mode":"ZONA PAGA","name":"E-13-278-OP-30","comuna":"MAIPU","service":"T381 00R","lat":-33.51054,"lon":-70.7551,"total":155.8,"pm":2.2,"fp":51.3,"pt":81.0,"avg_stage_min":18.7},{"year":"2019","mode":"ZONA PAGA","name":"I-4-12-PO-11","comuna":"RECOLETA","service":"B16 00R","lat":-33.38036,"lon":-70.64758,"total":147.7,"pm":3.5,"fp":70.0,"pt":64.3,"avg_stage_min":17.8},{"year":"2019","mode":"ZONA PAGA","name":"T-34-270-NS-10","comuna":"PUENTE ALTO","service":"F05 00R","lat":-33.57709,"lon":-70.58258,"total":137.7,"pm":4.7,"fp":74.7,"pt":51.4,"avg_stage_min":11.9},{"year":"2019","mode":"ZONA PAGA","name":"E-14-134-SN-30","comuna":"PROVIDENCIA","service":"T315 E0 00R","lat":-33.43759,"lon":-70.63497,"total":135.6,"pm":1.0,"fp":72.0,"pt":61.4,"avg_stage_min":42.5},{"year":"2019","mode":"ZONA PAGA","name":"T-17-141-SN-2","comuna":"LAS CONDES","service":"B52 00R","lat":-33.40729,"lon":-70.54488,"total":119.9,"pm":43.6,"fp":76.2,"pt":0.0,"avg_stage_min":21.1},{"year":"2019","mode":"ZONA PAGA","name":"L-34-52-5-PO","comuna":"PUENTE ALTO","service":"F24 00R","lat":-33.56945,"lon":-70.58319,"total":117.4,"pm":0.0,"fp":29.0,"pt":80.1,"avg_stage_min":8.7},{"year":"2019","mode":"ZONA PAGA","name":"T-34-270-NS-50","comuna":"PUENTE ALTO","service":"F10 00R","lat":-33.60173,"lon":-70.57756,"total":116.8,"pm":1.1,"fp":64.9,"pt":43.6,"avg_stage_min":16.0},{"year":"2019","mode":"ZONA PAGA","name":"E-13-278-OP-40","comuna":"MAIPU","service":"T380 00R","lat":-33.51053,"lon":-70.7566,"total":106.2,"pm":3.5,"fp":47.8,"pt":46.8,"avg_stage_min":22.3},{"year":"2019","mode":"ZONA PAGA","name":"E-24-205-NS-66","comuna":"SAN RAMON","service":"T209 00I","lat":-33.54378,"lon":-70.63416,"total":101.7,"pm":57.3,"fp":23.9,"pt":20.5,"avg_stage_min":11.4},{"year":"2019","mode":"ZONA PAGA","name":"L-33-42-70-PO","comuna":"LA FLORIDA","service":"T361 00R","lat":-33.56085,"lon":-70.58583,"total":92.4,"pm":4.6,"fp":38.0,"pt":48.8,"avg_stage_min":15.3},{"year":"2019","mode":"ZONA PAGA","name":"E-34-270-NS-70","comuna":"PUENTE ALTO","service":"F29 00I","lat":-33.60961,"lon":-70.57602,"total":91.9,"pm":5.5,"fp":30.4,"pt":44.9,"avg_stage_min":21.2},{"year":"2023","mode":"BUS","name":"E-13-54-SN-10","comuna":"MAIPU","service":"T379 00I","lat":-33.50942,"lon":-70.75716,"total":100.3,"pm":16.8,"fp":66.8,"pt":14.0,"avg_stage_min":20.7},{"year":"2023","mode":"BUS","name":"T-13-54-NS-60","comuna":"MAIPU","service":"T379 00R","lat":-33.49564,"lon":-70.75765,"total":71.5,"pm":6.3,"fp":40.1,"pt":22.2,"avg_stage_min":13.7},{"year":"2023","mode":"BUS","name":"E-13-54-NS-80","comuna":"MAIPU","service":"T506 00R","lat":-33.50946,"lon":-70.75733,"total":59.9,"pm":4.8,"fp":33.9,"pt":18.3,"avg_stage_min":15.6},{"year":"2023","mode":"BUS","name":"T-20-53-OP-50","comuna":"SANTIAGO","service":"T379 00R","lat":-33.44341,"lon":-70.64965,"total":55.8,"pm":2.4,"fp":36.8,"pt":16.6,"avg_stage_min":34.9},{"year":"2023","mode":"BUS","name":"T-18-157-PO-45","comuna":"NUNOA","service":"T325 00R","lat":-33.45416,"lon":-70.6058,"total":55.3,"pm":4.8,"fp":40.4,"pt":8.9,"avg_stage_min":13.7},{"year":"2023","mode":"BUS","name":"I-13-54-NS-51","comuna":"MAIPU","service":"T378 00R","lat":-33.48955,"lon":-70.75273,"total":55.0,"pm":5.9,"fp":25.6,"pt":15.1,"avg_stage_min":10.0},{"year":"2023","mode":"BUS","name":"E-9-53-OP-15","comuna":"LO PRADO","service":"F55 00R","lat":-33.4575,"lon":-70.70774,"total":51.6,"pm":0.0,"fp":34.2,"pt":14.3,"avg_stage_min":19.6},{"year":"2023","mode":"BUS","name":"E-13-54-SN-5","comuna":"MAIPU","service":"T506 00I","lat":-33.50994,"lon":-70.75718,"total":50.4,"pm":15.6,"fp":23.3,"pt":10.0,"avg_stage_min":26.5},{"year":"2023","mode":"BUS","name":"E-14-116-PO-60","comuna":"PROVIDENCIA","service":"T501 00I","lat":-33.43203,"lon":-70.58497,"total":47.0,"pm":17.6,"fp":16.1,"pt":9.3,"avg_stage_min":10.9},{"year":"2023","mode":"BUS","name":"T-20-189-OP-20","comuna":"SANTIAGO","service":"T506 00R","lat":-33.45809,"lon":-70.64296,"total":46.3,"pm":12.6,"fp":26.8,"pt":6.9,"avg_stage_min":19.9},{"year":"2023","mode":"BUS","name":"I-26-228-NS-3","comuna":"LA CISTERNA","service":"T471 00R","lat":-33.51732,"lon":-70.65897,"total":45.9,"pm":4.4,"fp":34.0,"pt":7.5,"avg_stage_min":21.0},{"year":"2023","mode":"BUS","name":"T-32-156-OP-10","comuna":"PENALOLEN","service":"T506 00R","lat":-33.476,"lon":-70.54228,"total":41.7,"pm":7.5,"fp":23.9,"pt":6.3,"avg_stage_min":14.7},{"year":"2023","mode":"BUS","name":"E-13-278-PO-15","comuna":"MAIPU","service":"F73 00I","lat":-33.51065,"lon":-70.75624,"total":41.2,"pm":3.6,"fp":22.1,"pt":14.1,"avg_stage_min":16.5},{"year":"2023","mode":"BUS","name":"E-10-71-PO-52","comuna":"PUDAHUEL","service":"T556 00I","lat":-33.4442,"lon":-70.7531,"total":40.4,"pm":12.5,"fp":26.3,"pt":1.5,"avg_stage_min":9.2},{"year":"2023","mode":"BUS","name":"E-18-157-PO-55","comuna":"NUNOA","service":"T514 00I","lat":-33.45493,"lon":-70.5987,"total":40.4,"pm":0.0,"fp":29.0,"pt":9.3,"avg_stage_min":15.1},{"year":"2023","mode":"BUS","name":"T-13-54-NS-65","comuna":"MAIPU","service":"T318 00I","lat":-33.49963,"lon":-70.75755,"total":39.1,"pm":6.4,"fp":29.8,"pt":1.5,"avg_stage_min":13.6},{"year":"2023","mode":"BUS","name":"T-18-156-PO-27","comuna":"NUNOA","service":"T506 00I","lat":-33.46214,"lon":-70.60883,"total":37.4,"pm":8.1,"fp":19.3,"pt":7.4,"avg_stage_min":7.5},{"year":"2023","mode":"BUS","name":"T-14-116-PO-20","comuna":"PROVIDENCIA","service":"T501 00I","lat":-33.43836,"lon":-70.60679,"total":36.6,"pm":8.5,"fp":18.6,"pt":6.6,"avg_stage_min":9.1},{"year":"2023","mode":"BUS","name":"E-14-116-OP-3","comuna":"PROVIDENCIA","service":"T518 00R","lat":-33.43203,"lon":-70.58545,"total":36.4,"pm":12.6,"fp":22.6,"pt":1.2,"avg_stage_min":11.1},{"year":"2023","mode":"BUS","name":"T-13-54-NS-25","comuna":"MAIPU","service":"T506 00R","lat":-33.48117,"lon":-70.74488,"total":35.2,"pm":1.2,"fp":16.9,"pt":13.2,"avg_stage_min":20.9},{"year":"2023","mode":"BUS","name":"T-14-135-OP-10","comuna":"PROVIDENCIA","service":"T212 00I","lat":-33.41912,"lon":-70.60583,"total":35.1,"pm":3.9,"fp":14.8,"pt":12.7,"avg_stage_min":25.1},{"year":"2023","mode":"BUS","name":"I-26-228-SN-25","comuna":"LA CISTERNA","service":"T1328 00R","lat":-33.53847,"lon":-70.66355,"total":34.0,"pm":6.3,"fp":8.1,"pt":10.7,"avg_stage_min":28.6},{"year":"2023","mode":"METRO","name":"LA CISTERNA","comuna":"LA CISTERNA","service":"L2","lat":-33.53771,"lon":-70.66407,"total":2319.7,"pm":936.2,"fp":988.4,"pt":336.9,"avg_stage_min":26.1},{"year":"2023","mode":"METRO","name":"TOBALABA","comuna":"PROVIDENCIA","service":"L1","lat":-33.41823,"lon":-70.60145,"total":1386.7,"pm":131.1,"fp":640.3,"pt":521.6,"avg_stage_min":22.6},{"year":"2023","mode":"METRO","name":"UNIVERSIDAD DE CHILE","comuna":"SANTIAGO","service":"L1","lat":-33.44387,"lon":-70.65039,"total":1196.1,"pm":74.4,"fp":760.9,"pt":324.1,"avg_stage_min":15.1},{"year":"2023","mode":"METRO","name":"PLAZA DE ARMAS","comuna":"SANTIAGO","service":"L5","lat":-33.43719,"lon":-70.65161,"total":1181.7,"pm":29.9,"fp":729.0,"pt":377.8,"avg_stage_min":17.4},{"year":"2023","mode":"METRO","name":"LOS LEONES","comuna":"PROVIDENCIA","service":"L1","lat":-33.42226,"lon":-70.60968,"total":1105.5,"pm":81.4,"fp":556.2,"pt":368.9,"avg_stage_min":19.5},{"year":"2023","mode":"METRO","name":"CAL Y CANTO","comuna":"SANTIAGO","service":"L2","lat":-33.4328,"lon":-70.65286,"total":1018.3,"pm":223.8,"fp":533.9,"pt":250.3,"avg_stage_min":15.3},{"year":"2023","mode":"METRO","name":"SAN PABLO","comuna":"LO PRADO","service":"L1","lat":-33.44514,"lon":-70.72314,"total":998.6,"pm":432.4,"fp":436.9,"pt":112.8,"avg_stage_min":20.7},{"year":"2023","mode":"METRO","name":"SANTA ANA","comuna":"SANTIAGO","service":"L2","lat":-33.43831,"lon":-70.66011,"total":948.2,"pm":202.2,"fp":379.8,"pt":304.0,"avg_stage_min":16.3},{"year":"2023","mode":"METRO","name":"LOS HEROES","comuna":"SANTIAGO","service":"L1","lat":-33.44647,"lon":-70.6605,"total":839.7,"pm":96.0,"fp":459.9,"pt":199.3,"avg_stage_min":15.2},{"year":"2023","mode":"METRO","name":"MANQUEHUE","comuna":"LAS CONDES","service":"L1","lat":-33.40884,"lon":-70.56724,"total":759.2,"pm":87.6,"fp":391.4,"pt":249.2,"avg_stage_min":26.8},{"year":"2023","mode":"METRO","name":"ESTACION CENTRAL","comuna":"ESTACION CENTRAL","service":"L1","lat":-33.45097,"lon":-70.67917,"total":730.7,"pm":248.4,"fp":354.5,"pt":107.4,"avg_stage_min":14.9},{"year":"2023","mode":"METRO","name":"PLAZA MAIPU","comuna":"MAIPU","service":"L5","lat":-33.51022,"lon":-70.75624,"total":711.1,"pm":319.3,"fp":310.4,"pt":65.9,"avg_stage_min":32.5},{"year":"2023","mode":"METRO","name":"LAS REJAS","comuna":"LO PRADO","service":"L1","lat":-33.45716,"lon":-70.70596,"total":681.1,"pm":263.8,"fp":329.7,"pt":77.1,"avg_stage_min":19.9},{"year":"2023","mode":"METRO","name":"PLAZA EGANA","comuna":"LA REINA","service":"L3","lat":-33.45328,"lon":-70.57073,"total":635.2,"pm":74.4,"fp":327.9,"pt":204.0,"avg_stage_min":29.1},{"year":"2023","mode":"METRO","name":"PLAZA DE PUENTE ALTO","comuna":"PUENTE ALTO","service":"L4","lat":-33.60955,"lon":-70.5759,"total":600.4,"pm":280.1,"fp":218.6,"pt":79.5,"avg_stage_min":35.8},{"year":"2023","mode":"METRO","name":"LOS LIBERTADORES","comuna":"QUILICURA","service":"L3","lat":-33.36544,"lon":-70.69244,"total":574.1,"pm":182.8,"fp":254.9,"pt":130.3,"avg_stage_min":23.5},{"year":"2023","mode":"METRO","name":"IRARRAZAVAL","comuna":"NUNOA","service":"L5","lat":-33.4531,"lon":-70.62883,"total":568.6,"pm":116.1,"fp":239.8,"pt":190.7,"avg_stage_min":17.6},{"year":"2023","mode":"METRO","name":"BAQUEDANO","comuna":"PROVIDENCIA","service":"L1","lat":-33.43719,"lon":-70.63517,"total":522.1,"pm":32.4,"fp":311.4,"pt":150.5,"avg_stage_min":18.3},{"year":"2023","mode":"METRO","name":"SAN JOAQUIN","comuna":"MACUL","service":"L5","lat":-33.49832,"lon":-70.61602,"total":512.9,"pm":21.5,"fp":282.1,"pt":188.2,"avg_stage_min":21.6},{"year":"2023","mode":"METRO","name":"ESCUELA MILITAR","comuna":"LAS CONDES","service":"L1","lat":-33.41431,"lon":-70.58444,"total":487.7,"pm":60.1,"fp":242.2,"pt":160.3,"avg_stage_min":23.3},{"year":"2023","mode":"METRO","name":"PEDRO DE VALDIVIA","comuna":"PROVIDENCIA","service":"L1","lat":-33.42547,"lon":-70.61427,"total":482.8,"pm":43.6,"fp":281.6,"pt":135.0,"avg_stage_min":20.6},{"year":"2023","mode":"METRO","name":"LOS DOMINICOS","comuna":"LAS CONDES","service":"L1","lat":-33.40787,"lon":-70.54504,"total":481.4,"pm":90.6,"fp":220.6,"pt":143.5,"avg_stage_min":28.2},{"year":"2023","mode":"ZONA PAGA","name":"I-26-228-SN-25","comuna":"LA CISTERNA","service":"T228 00I","lat":-33.53847,"lon":-70.66355,"total":174.1,"pm":7.7,"fp":91.7,"pt":66.2,"avg_stage_min":18.3},{"year":"2023","mode":"ZONA PAGA","name":"I-33-134-SN-67","comuna":"LA FLORIDA","service":"T322 00I","lat":-33.51903,"lon":-70.59843,"total":167.8,"pm":9.9,"fp":83.0,"pt":67.8,"avg_stage_min":24.6},{"year":"2023","mode":"ZONA PAGA","name":"T-34-270-NS-10","comuna":"PUENTE ALTO","service":"T926 11R","lat":-33.57709,"lon":-70.58258,"total":112.4,"pm":8.2,"fp":62.0,"pt":35.4,"avg_stage_min":14.5},{"year":"2023","mode":"ZONA PAGA","name":"T-18-156-OP-38","comuna":"NUNOA","service":"T516 00R","lat":-33.46455,"lon":-70.5972,"total":102.0,"pm":5.9,"fp":59.6,"pt":36.5,"avg_stage_min":18.1},{"year":"2023","mode":"ZONA PAGA","name":"E-13-278-OP-40","comuna":"MAIPU","service":"T373 07R","lat":-33.51052,"lon":-70.7566,"total":93.1,"pm":4.8,"fp":60.3,"pt":28.0,"avg_stage_min":14.0},{"year":"2023","mode":"ZONA PAGA","name":"E-18-156-PO-80","comuna":"NUNOA","service":"T506 00I","lat":-33.46924,"lon":-70.57639,"total":82.4,"pm":13.5,"fp":43.3,"pt":25.6,"avg_stage_min":9.7},{"year":"2023","mode":"ZONA PAGA","name":"T-17-141-SN-2","comuna":"LAS CONDES","service":"T1102 C0 01R","lat":-33.40728,"lon":-70.54486,"total":79.3,"pm":37.1,"fp":42.2,"pt":0.0,"avg_stage_min":18.9},{"year":"2023","mode":"ZONA PAGA","name":"T-17-140-PO-29","comuna":"LAS CONDES","service":"T1221 C0 00I","lat":-33.40951,"lon":-70.56953,"total":73.6,"pm":25.0,"fp":36.0,"pt":12.5,"avg_stage_min":16.3},{"year":"2023","mode":"ZONA PAGA","name":"I-26-228-NS-3","comuna":"LA CISTERNA","service":"T478 00R","lat":-33.51732,"lon":-70.65897,"total":70.8,"pm":7.5,"fp":29.3,"pt":30.2,"avg_stage_min":13.0},{"year":"2023","mode":"ZONA PAGA","name":"T-34-270-SN-45","comuna":"PUENTE ALTO","service":"T925 00I","lat":-33.57689,"lon":-70.582,"total":67.2,"pm":10.0,"fp":33.0,"pt":21.2,"avg_stage_min":11.6},{"year":"2023","mode":"ZONA PAGA","name":"E-13-278-PO-25","comuna":"MAIPU","service":"T371 00I","lat":-33.5106,"lon":-70.75476,"total":65.6,"pm":4.8,"fp":45.4,"pt":15.4,"avg_stage_min":16.9},{"year":"2023","mode":"ZONA PAGA","name":"E-9-71-OP-33","comuna":"LO PRADO","service":"T557 00R","lat":-33.44422,"lon":-70.72389,"total":64.2,"pm":4.5,"fp":34.6,"pt":25.1,"avg_stage_min":12.3},{"year":"2023","mode":"ZONA PAGA","name":"E-20-53-OP-125","comuna":"SANTIAGO","service":"T379 00R","lat":-33.4502,"lon":-70.67736,"total":63.2,"pm":0.0,"fp":49.5,"pt":13.8,"avg_stage_min":32.2},{"year":"2023","mode":"ZONA PAGA","name":"E-10-71-OP-4","comuna":"PUDAHUEL","service":"T557 00R","lat":-33.44456,"lon":-70.74121,"total":62.9,"pm":11.3,"fp":32.7,"pt":18.9,"avg_stage_min":8.3},{"year":"2023","mode":"ZONA PAGA","name":"E-13-278-OP-30","comuna":"MAIPU","service":"T374 00R","lat":-33.51054,"lon":-70.75508,"total":59.7,"pm":3.7,"fp":32.8,"pt":23.3,"avg_stage_min":24.7},{"year":"2023","mode":"ZONA PAGA","name":"T-12-55-NS-15","comuna":"CERRILLOS","service":"F48 00R","lat":-33.48406,"lon":-70.69626,"total":58.6,"pm":10.1,"fp":27.3,"pt":21.2,"avg_stage_min":25.3},{"year":"2023","mode":"ZONA PAGA","name":"E-18-159-NS-5","comuna":"NUNOA","service":"T212 00I","lat":-33.45532,"lon":-70.59811,"total":57.1,"pm":0.0,"fp":46.1,"pt":11.0,"avg_stage_min":17.2},{"year":"2023","mode":"ZONA PAGA","name":"T-10-71-OP-4","comuna":"PUDAHUEL","service":"T535 C0 06R","lat":-33.44455,"lon":-70.74167,"total":56.3,"pm":8.8,"fp":31.3,"pt":16.1,"avg_stage_min":25.6},{"year":"2023","mode":"ZONA PAGA","name":"L-8-22-15-NS","comuna":"QUINTA NORMAL","service":"T521 00I","lat":-33.43227,"lon":-70.68846,"total":55.2,"pm":0.0,"fp":21.9,"pt":33.2,"avg_stage_min":49.1},{"year":"2023","mode":"ZONA PAGA","name":"E-17-140-PO-7","comuna":"LAS CONDES","service":"T556 00I","lat":-33.41346,"lon":-70.58224,"total":52.1,"pm":33.0,"fp":19.1,"pt":0.0,"avg_stage_min":21.5},{"year":"2023","mode":"ZONA PAGA","name":"T-18-156-PO-37","comuna":"NUNOA","service":"T507 00I","lat":-33.46471,"lon":-70.59701,"total":51.8,"pm":7.5,"fp":27.8,"pt":16.5,"avg_stage_min":9.8},{"year":"2023","mode":"ZONA PAGA","name":"E-17-12-SN-30","comuna":"LAS CONDES","service":"T1111 00I","lat":-33.41434,"lon":-70.58425,"total":50.8,"pm":22.9,"fp":27.9,"pt":0.0,"avg_stage_min":13.7}],"half_hour_curves":[{"year":"2019","mh":"00:00","mode":"BUS","sample_trips":13,"expanded_trips":17.3,"avg_travel_min":17.77,"avg_dist_km":4.54,"avg_stages":1.08},{"year":"2019","mh":"00:30","mode":"BUS","sample_trips":12,"expanded_trips":20.4,"avg_travel_min":5.4,"avg_dist_km":2.38,"avg_stages":1.0},{"year":"2019","mh":"01:00","mode":"BUS","sample_trips":2,"expanded_trips":4.2,"avg_travel_min":34.0,"avg_dist_km":11.29,"avg_stages":1.5},{"year":"2019","mh":"01:30","mode":"BUS","sample_trips":1,"expanded_trips":0.0,"avg_travel_min":0.0,"avg_dist_km":0.0,"avg_stages":1.0},{"year":"2019","mh":"02:30","mode":"BUS","sample_trips":1,"expanded_trips":1.7,"avg_travel_min":49.42,"avg_dist_km":26.6,"avg_stages":1.0},{"year":"2019","mh":"05:00","mode":"BUS","sample_trips":14,"expanded_trips":12.5,"avg_travel_min":41.34,"avg_dist_km":15.99,"avg_stages":1.93},{"year":"2019","mh":"05:30","mode":"BUS","sample_trips":76,"expanded_trips":77.2,"avg_travel_min":54.18,"avg_dist_km":20.09,"avg_stages":2.08},{"year":"2019","mh":"05:30","mode":"METRO","sample_trips":26,"expanded_trips":32.6,"avg_travel_min":27.27,"avg_dist_km":11.34,"avg_stages":1.15},{"year":"2019","mh":"05:30","mode":"ZONA PAGA","sample_trips":5,"expanded_trips":4.8,"avg_travel_min":54.88,"avg_dist_km":16.24,"avg_stages":1.8},{"year":"2019","mh":"06:00","mode":"BUS","sample_trips":249,"expanded_trips":271.1,"avg_travel_min":51.34,"avg_dist_km":18.21,"avg_stages":1.92},{"year":"2019","mh":"06:00","mode":"METRO","sample_trips":120,"expanded_trips":120.8,"avg_travel_min":30.12,"avg_dist_km":12.85,"avg_stages":1.14},{"year":"2019","mh":"06:00","mode":"METROTREN","sample_trips":6,"expanded_trips":6.7,"avg_travel_min":41.12,"avg_dist_km":6.54,"avg_stages":2.0},{"year":"2019","mh":"06:00","mode":"ZONA PAGA","sample_trips":23,"expanded_trips":21.5,"avg_travel_min":57.87,"avg_dist_km":19.92,"avg_stages":1.74},{"year":"2019","mh":"06:30","mode":"BUS","sample_trips":844,"expanded_trips":949.8,"avg_travel_min":48.74,"avg_dist_km":16.32,"avg_stages":1.9},{"year":"2019","mh":"06:30","mode":"METRO","sample_trips":535,"expanded_trips":517.6,"avg_travel_min":32.84,"avg_dist_km":14.16,"avg_stages":1.16},{"year":"2019","mh":"06:30","mode":"METROTREN","sample_trips":44,"expanded_trips":50.2,"avg_travel_min":37.84,"avg_dist_km":6.32,"avg_stages":1.75},{"year":"2019","mh":"06:30","mode":"ZONA PAGA","sample_trips":81,"expanded_trips":93.4,"avg_travel_min":48.32,"avg_dist_km":14.55,"avg_stages":1.67},{"year":"2019","mh":"07:00","mode":"BUS","sample_trips":1589,"expanded_trips":1768.5,"avg_travel_min":42.87,"avg_dist_km":13.11,"avg_stages":1.75},{"year":"2019","mh":"07:00","mode":"METRO","sample_trips":1467,"expanded_trips":1594.0,"avg_travel_min":27.12,"avg_dist_km":11.63,"avg_stages":1.1},{"year":"2019","mh":"07:00","mode":"METROTREN","sample_trips":93,"expanded_trips":101.2,"avg_travel_min":30.21,"avg_dist_km":2.86,"avg_stages":1.57},{"year":"2019","mh":"07:00","mode":"ZONA PAGA","sample_trips":151,"expanded_trips":161.9,"avg_travel_min":40.4,"avg_dist_km":10.28,"avg_stages":1.48},{"year":"2019","mh":"07:30","mode":"BUS","sample_trips":1394,"expanded_trips":1524.2,"avg_travel_min":36.65,"avg_dist_km":10.23,"avg_stages":1.63},{"year":"2019","mh":"07:30","mode":"METRO","sample_trips":2048,"expanded_trips":2317.2,"avg_travel_min":22.43,"avg_dist_km":9.6,"avg_stages":1.08},{"year":"2019","mh":"07:30","mode":"METROTREN","sample_trips":67,"expanded_trips":70.8,"avg_travel_min":25.62,"avg_dist_km":1.99,"avg_stages":1.48},{"year":"2019","mh":"07:30","mode":"ZONA PAGA","sample_trips":192,"expanded_trips":205.9,"avg_travel_min":36.93,"avg_dist_km":7.71,"avg_stages":1.37},{"year":"2019","mh":"08:00","mode":"BUS","sample_trips":1071,"expanded_trips":1164.4,"avg_travel_min":36.56,"avg_dist_km":10.54,"avg_stages":1.62},{"year":"2019","mh":"08:00","mode":"METRO","sample_trips":1261,"expanded_trips":1425.3,"avg_travel_min":20.29,"avg_dist_km":8.57,"avg_stages":1.08},{"year":"2019","mh":"08:00","mode":"METROTREN","sample_trips":42,"expanded_trips":47.0,"avg_travel_min":34.27,"avg_dist_km":4.72,"avg_stages":1.62},{"year":"2019","mh":"08:00","mode":"ZONA PAGA","sample_trips":143,"expanded_trips":167.5,"avg_travel_min":40.4,"avg_dist_km":6.88,"avg_stages":1.22},{"year":"2019","mh":"08:30","mode":"BUS","sample_trips":878,"expanded_trips":966.8,"avg_travel_min":39.22,"avg_dist_km":12.65,"avg_stages":1.77},{"year":"2019","mh":"08:30","mode":"METRO","sample_trips":757,"expanded_trips":854.9,"avg_travel_min":24.6,"avg_dist_km":10.38,"avg_stages":1.12},{"year":"2019","mh":"08:30","mode":"METROTREN","sample_trips":46,"expanded_trips":51.5,"avg_travel_min":36.17,"avg_dist_km":4.7,"avg_stages":1.93},{"year":"2019","mh":"08:30","mode":"ZONA PAGA","sample_trips":112,"expanded_trips":124.2,"avg_travel_min":38.56,"avg_dist_km":8.94,"avg_stages":1.38},{"year":"2019","mh":"09:00","mode":"BUS","sample_trips":905,"expanded_trips":1030.0,"avg_travel_min":35.27,"avg_dist_km":11.56,"avg_stages":1.79},{"year":"2019","mh":"09:00","mode":"METRO","sample_trips":943,"expanded_trips":1062.1,"avg_travel_min":23.56,"avg_dist_km":9.81,"avg_stages":1.11},{"year":"2019","mh":"09:00","mode":"METROTREN","sample_trips":32,"expanded_trips":36.8,"avg_travel_min":28.03,"avg_dist_km":2.79,"avg_stages":1.56},{"year":"2019","mh":"09:00","mode":"ZONA PAGA","sample_trips":81,"expanded_trips":91.1,"avg_travel_min":34.27,"avg_dist_km":9.26,"avg_stages":1.33},{"year":"2019","mh":"09:30","mode":"BUS","sample_trips":714,"expanded_trips":802.6,"avg_travel_min":33.17,"avg_dist_km":11.09,"avg_stages":1.64},{"year":"2019","mh":"09:30","mode":"METRO","sample_trips":877,"expanded_trips":976.7,"avg_travel_min":20.01,"avg_dist_km":8.42,"avg_stages":1.1},{"year":"2019","mh":"09:30","mode":"METROTREN","sample_trips":14,"expanded_trips":18.4,"avg_travel_min":24.84,"avg_dist_km":1.96,"avg_stages":1.64},{"year":"2019","mh":"09:30","mode":"ZONA PAGA","sample_trips":94,"expanded_trips":104.0,"avg_travel_min":28.47,"avg_dist_km":8.29,"avg_stages":1.32},{"year":"2019","mh":"10:00","mode":"BUS","sample_trips":598,"expanded_trips":691.9,"avg_travel_min":33.28,"avg_dist_km":11.49,"avg_stages":1.69},{"year":"2019","mh":"10:00","mode":"METRO","sample_trips":611,"expanded_trips":669.8,"avg_travel_min":21.75,"avg_dist_km":9.08,"avg_stages":1.16},{"year":"2019","mh":"10:00","mode":"METROTREN","sample_trips":26,"expanded_trips":31.9,"avg_travel_min":36.6,"avg_dist_km":4.27,"avg_stages":1.73},{"year":"2019","mh":"10:00","mode":"ZONA PAGA","sample_trips":84,"expanded_trips":85.1,"avg_travel_min":27.23,"avg_dist_km":7.26,"avg_stages":1.27},{"year":"2019","mh":"10:30","mode":"BUS","sample_trips":579,"expanded_trips":640.9,"avg_travel_min":32.1,"avg_dist_km":10.48,"avg_stages":1.63},{"year":"2019","mh":"10:30","mode":"METRO","sample_trips":653,"expanded_trips":721.2,"avg_travel_min":22.41,"avg_dist_km":9.03,"avg_stages":1.16},{"year":"2019","mh":"10:30","mode":"METROTREN","sample_trips":15,"expanded_trips":16.7,"avg_travel_min":24.48,"avg_dist_km":2.49,"avg_stages":1.53},{"year":"2019","mh":"10:30","mode":"ZONA PAGA","sample_trips":74,"expanded_trips":72.7,"avg_travel_min":31.16,"avg_dist_km":8.47,"avg_stages":1.35},{"year":"2019","mh":"11:00","mode":"BUS","sample_trips":550,"expanded_trips":616.4,"avg_travel_min":30.5,"avg_dist_km":10.03,"avg_stages":1.62},{"year":"2019","mh":"11:00","mode":"METRO","sample_trips":660,"expanded_trips":731.3,"avg_travel_min":20.67,"avg_dist_km":8.24,"avg_stages":1.15},{"year":"2019","mh":"11:00","mode":"METROTREN","sample_trips":29,"expanded_trips":36.1,"avg_travel_min":31.07,"avg_dist_km":3.55,"avg_stages":1.66},{"year":"2019","mh":"11:00","mode":"ZONA PAGA","sample_trips":59,"expanded_trips":60.0,"avg_travel_min":29.69,"avg_dist_km":6.46,"avg_stages":1.36},{"year":"2019","mh":"11:30","mode":"BUS","sample_trips":537,"expanded_trips":589.4,"avg_travel_min":30.22,"avg_dist_km":9.33,"avg_stages":1.61},{"year":"2019","mh":"11:30","mode":"METRO","sample_trips":689,"expanded_trips":738.5,"avg_travel_min":22.89,"avg_dist_km":8.97,"avg_stages":1.21},{"year":"2019","mh":"11:30","mode":"METROTREN","sample_trips":12,"expanded_trips":10.4,"avg_travel_min":20.33,"avg_dist_km":2.58,"avg_stages":1.67},{"year":"2019","mh":"11:30","mode":"ZONA PAGA","sample_trips":73,"expanded_trips":81.7,"avg_travel_min":31.53,"avg_dist_km":7.26,"avg_stages":1.32},{"year":"2019","mh":"12:00","mode":"BUS","sample_trips":578,"expanded_trips":606.2,"avg_travel_min":28.95,"avg_dist_km":9.17,"avg_stages":1.55},{"year":"2019","mh":"12:00","mode":"METRO","sample_trips":742,"expanded_trips":763.9,"avg_travel_min":23.7,"avg_dist_km":9.02,"avg_stages":1.25},{"year":"2019","mh":"12:00","mode":"METROTREN","sample_trips":17,"expanded_trips":19.5,"avg_travel_min":25.82,"avg_dist_km":2.22,"avg_stages":1.47},{"year":"2019","mh":"12:00","mode":"ZONA PAGA","sample_trips":85,"expanded_trips":88.1,"avg_travel_min":30.81,"avg_dist_km":7.18,"avg_stages":1.27},{"year":"2019","mh":"12:30","mode":"BUS","sample_trips":688,"expanded_trips":732.9,"avg_travel_min":30.93,"avg_dist_km":9.78,"avg_stages":1.57},{"year":"2019","mh":"12:30","mode":"METRO","sample_trips":982,"expanded_trips":1023.4,"avg_travel_min":24.77,"avg_dist_km":9.37,"avg_stages":1.26},{"year":"2019","mh":"12:30","mode":"METROTREN","sample_trips":24,"expanded_trips":27.3,"avg_travel_min":25.45,"avg_dist_km":1.22,"avg_stages":1.46},{"year":"2019","mh":"12:30","mode":"ZONA PAGA","sample_trips":91,"expanded_trips":91.4,"avg_travel_min":30.13,"avg_dist_km":7.31,"avg_stages":1.31},{"year":"2019","mh":"13:00","mode":"BUS","sample_trips":806,"expanded_trips":858.9,"avg_travel_min":31.51,"avg_dist_km":9.99,"avg_stages":1.56},{"year":"2019","mh":"13:00","mode":"METRO","sample_trips":1159,"expanded_trips":1235.1,"avg_travel_min":24.26,"avg_dist_km":9.29,"avg_stages":1.24},{"year":"2019","mh":"13:00","mode":"METROTREN","sample_trips":33,"expanded_trips":38.2,"avg_travel_min":22.29,"avg_dist_km":1.61,"avg_stages":1.36},{"year":"2019","mh":"13:00","mode":"ZONA PAGA","sample_trips":115,"expanded_trips":125.3,"avg_travel_min":28.36,"avg_dist_km":6.56,"avg_stages":1.3},{"year":"2019","mh":"13:30","mode":"BUS","sample_trips":722,"expanded_trips":765.4,"avg_travel_min":27.74,"avg_dist_km":8.89,"avg_stages":1.48},{"year":"2019","mh":"13:30","mode":"METRO","sample_trips":1063,"expanded_trips":1092.5,"avg_travel_min":23.73,"avg_dist_km":9.01,"avg_stages":1.25},{"year":"2019","mh":"13:30","mode":"METROTREN","sample_trips":35,"expanded_trips":38.1,"avg_travel_min":30.02,"avg_dist_km":2.91,"avg_stages":1.54},{"year":"2019","mh":"13:30","mode":"ZONA PAGA","sample_trips":121,"expanded_trips":116.8,"avg_travel_min":28.64,"avg_dist_km":7.2,"avg_stages":1.36},{"year":"2019","mh":"14:00","mode":"BUS","sample_trips":607,"expanded_trips":667.2,"avg_travel_min":24.56,"avg_dist_km":7.93,"avg_stages":1.45},{"year":"2019","mh":"14:00","mode":"METRO","sample_trips":905,"expanded_trips":980.7,"avg_travel_min":23.5,"avg_dist_km":8.82,"avg_stages":1.27},{"year":"2019","mh":"14:00","mode":"METROTREN","sample_trips":16,"expanded_trips":20.5,"avg_travel_min":42.2,"avg_dist_km":5.98,"avg_stages":1.88},{"year":"2019","mh":"14:00","mode":"ZONA PAGA","sample_trips":102,"expanded_trips":108.7,"avg_travel_min":28.83,"avg_dist_km":6.12,"avg_stages":1.16},{"year":"2019","mh":"14:30","mode":"BUS","sample_trips":551,"expanded_trips":601.5,"avg_travel_min":27.59,"avg_dist_km":8.56,"avg_stages":1.43},{"year":"2019","mh":"14:30","mode":"METRO","sample_trips":768,"expanded_trips":828.8,"avg_travel_min":23.97,"avg_dist_km":9.07,"avg_stages":1.27},{"year":"2019","mh":"14:30","mode":"METROTREN","sample_trips":11,"expanded_trips":16.1,"avg_travel_min":26.58,"avg_dist_km":2.17,"avg_stages":1.36},{"year":"2019","mh":"14:30","mode":"ZONA PAGA","sample_trips":112,"expanded_trips":112.1,"avg_travel_min":26.16,"avg_dist_km":6.45,"avg_stages":1.28},{"year":"2019","mh":"15:00","mode":"BUS","sample_trips":480,"expanded_trips":541.0,"avg_travel_min":26.47,"avg_dist_km":8.32,"avg_stages":1.4},{"year":"2019","mh":"15:00","mode":"METRO","sample_trips":900,"expanded_trips":966.7,"avg_travel_min":24.88,"avg_dist_km":9.29,"avg_stages":1.29},{"year":"2019","mh":"15:00","mode":"METROTREN","sample_trips":9,"expanded_trips":8.7,"avg_travel_min":33.17,"avg_dist_km":2.95,"avg_stages":1.56},{"year":"2019","mh":"15:00","mode":"ZONA PAGA","sample_trips":100,"expanded_trips":97.2,"avg_travel_min":26.13,"avg_dist_km":6.56,"avg_stages":1.25},{"year":"2019","mh":"15:30","mode":"BUS","sample_trips":606,"expanded_trips":626.6,"avg_travel_min":28.07,"avg_dist_km":8.22,"avg_stages":1.47},{"year":"2019","mh":"15:30","mode":"METRO","sample_trips":1132,"expanded_trips":1186.8,"avg_travel_min":25.76,"avg_dist_km":9.57,"avg_stages":1.32},{"year":"2019","mh":"15:30","mode":"METROTREN","sample_trips":23,"expanded_trips":27.9,"avg_travel_min":30.35,"avg_dist_km":3.12,"avg_stages":1.43},{"year":"2019","mh":"15:30","mode":"ZONA PAGA","sample_trips":110,"expanded_trips":112.2,"avg_travel_min":29.34,"avg_dist_km":7.14,"avg_stages":1.18},{"year":"2019","mh":"16:00","mode":"BUS","sample_trips":679,"expanded_trips":682.5,"avg_travel_min":30.06,"avg_dist_km":9.16,"avg_stages":1.49},{"year":"2019","mh":"16:00","mode":"METRO","sample_trips":1111,"expanded_trips":1180.5,"avg_travel_min":25.89,"avg_dist_km":9.63,"avg_stages":1.29},{"year":"2019","mh":"16:00","mode":"METROTREN","sample_trips":13,"expanded_trips":13.0,"avg_travel_min":20.84,"avg_dist_km":1.54,"avg_stages":1.31},{"year":"2019","mh":"16:00","mode":"ZONA PAGA","sample_trips":158,"expanded_trips":161.7,"avg_travel_min":29.98,"avg_dist_km":6.36,"avg_stages":1.22},{"year":"2019","mh":"16:30","mode":"BUS","sample_trips":749,"expanded_trips":725.7,"avg_travel_min":29.52,"avg_dist_km":8.25,"avg_stages":1.45},{"year":"2019","mh":"16:30","mode":"METRO","sample_trips":1317,"expanded_trips":1369.0,"avg_travel_min":27.34,"avg_dist_km":10.01,"avg_stages":1.31},{"year":"2019","mh":"16:30","mode":"METROTREN","sample_trips":28,"expanded_trips":36.8,"avg_travel_min":26.14,"avg_dist_km":2.67,"avg_stages":1.43},{"year":"2019","mh":"16:30","mode":"ZONA PAGA","sample_trips":226,"expanded_trips":208.2,"avg_travel_min":30.31,"avg_dist_km":6.38,"avg_stages":1.21},{"year":"2019","mh":"17:00","mode":"BUS","sample_trips":888,"expanded_trips":903.7,"avg_travel_min":32.0,"avg_dist_km":9.22,"avg_stages":1.49},{"year":"2019","mh":"17:00","mode":"METRO","sample_trips":1605,"expanded_trips":1652.2,"avg_travel_min":27.87,"avg_dist_km":10.35,"avg_stages":1.32},{"year":"2019","mh":"17:00","mode":"METROTREN","sample_trips":38,"expanded_trips":49.5,"avg_travel_min":24.29,"avg_dist_km":2.09,"avg_stages":1.45},{"year":"2019","mh":"17:00","mode":"ZONA PAGA","sample_trips":167,"expanded_trips":159.4,"avg_travel_min":33.01,"avg_dist_km":6.82,"avg_stages":1.31},{"year":"2019","mh":"17:30","mode":"BUS","sample_trips":1036,"expanded_trips":1081.4,"avg_travel_min":33.2,"avg_dist_km":9.08,"avg_stages":1.5},{"year":"2019","mh":"17:30","mode":"METRO","sample_trips":1675,"expanded_trips":1794.2,"avg_travel_min":28.1,"avg_dist_km":10.41,"avg_stages":1.3},{"year":"2019","mh":"17:30","mode":"METROTREN","sample_trips":27,"expanded_trips":33.6,"avg_travel_min":35.71,"avg_dist_km":3.19,"avg_stages":1.67},{"year":"2019","mh":"17:30","mode":"ZONA PAGA","sample_trips":290,"expanded_trips":301.7,"avg_travel_min":35.25,"avg_dist_km":7.15,"avg_stages":1.34},{"year":"2019","mh":"18:00","mode":"BUS","sample_trips":847,"expanded_trips":899.1,"avg_travel_min":31.64,"avg_dist_km":8.35,"avg_stages":1.47},{"year":"2019","mh":"18:00","mode":"METRO","sample_trips":1719,"expanded_trips":1854.2,"avg_travel_min":25.62,"avg_dist_km":9.65,"avg_stages":1.24},{"year":"2019","mh":"18:00","mode":"METROTREN","sample_trips":24,"expanded_trips":25.7,"avg_travel_min":22.5,"avg_dist_km":2.43,"avg_stages":1.5},{"year":"2019","mh":"18:00","mode":"ZONA PAGA","sample_trips":282,"expanded_trips":284.3,"avg_travel_min":36.65,"avg_dist_km":7.05,"avg_stages":1.29},{"year":"2019","mh":"18:30","mode":"BUS","sample_trips":728,"expanded_trips":752.8,"avg_travel_min":29.32,"avg_dist_km":7.45,"avg_stages":1.38},{"year":"2019","mh":"18:30","mode":"METRO","sample_trips":1567,"expanded_trips":1662.9,"avg_travel_min":26.97,"avg_dist_km":10.0,"avg_stages":1.27},{"year":"2019","mh":"18:30","mode":"METROTREN","sample_trips":38,"expanded_trips":44.0,"avg_travel_min":19.05,"avg_dist_km":0.6,"avg_stages":1.16},{"year":"2019","mh":"18:30","mode":"ZONA PAGA","sample_trips":237,"expanded_trips":250.4,"avg_travel_min":33.9,"avg_dist_km":5.75,"avg_stages":1.15},{"year":"2019","mh":"19:00","mode":"BUS","sample_trips":536,"expanded_trips":546.5,"avg_travel_min":29.71,"avg_dist_km":7.76,"avg_stages":1.41},{"year":"2019","mh":"19:00","mode":"METRO","sample_trips":1136,"expanded_trips":1177.8,"avg_travel_min":28.99,"avg_dist_km":10.74,"avg_stages":1.33},{"year":"2019","mh":"19:00","mode":"METROTREN","sample_trips":31,"expanded_trips":38.0,"avg_travel_min":18.42,"avg_dist_km":0.76,"avg_stages":1.35},{"year":"2019","mh":"19:00","mode":"ZONA PAGA","sample_trips":265,"expanded_trips":273.0,"avg_travel_min":32.87,"avg_dist_km":6.58,"avg_stages":1.2},{"year":"2019","mh":"19:30","mode":"BUS","sample_trips":385,"expanded_trips":379.7,"avg_travel_min":25.83,"avg_dist_km":7.05,"avg_stages":1.35},{"year":"2019","mh":"19:30","mode":"METRO","sample_trips":775,"expanded_trips":786.2,"avg_travel_min":26.16,"avg_dist_km":9.96,"avg_stages":1.31},{"year":"2019","mh":"19:30","mode":"METROTREN","sample_trips":15,"expanded_trips":16.9,"avg_travel_min":19.37,"avg_dist_km":2.78,"avg_stages":1.33},{"year":"2019","mh":"19:30","mode":"ZONA PAGA","sample_trips":184,"expanded_trips":199.6,"avg_travel_min":29.57,"avg_dist_km":6.49,"avg_stages":1.2},{"year":"2019","mh":"20:00","mode":"BUS","sample_trips":342,"expanded_trips":340.5,"avg_travel_min":25.7,"avg_dist_km":7.92,"avg_stages":1.39},{"year":"2019","mh":"20:00","mode":"METRO","sample_trips":738,"expanded_trips":751.1,"avg_travel_min":28.14,"avg_dist_km":10.42,"avg_stages":1.35},{"year":"2019","mh":"20:00","mode":"METROTREN","sample_trips":11,"expanded_trips":15.2,"avg_travel_min":23.71,"avg_dist_km":1.81,"avg_stages":1.27},{"year":"2019","mh":"20:00","mode":"ZONA PAGA","sample_trips":150,"expanded_trips":151.2,"avg_travel_min":28.74,"avg_dist_km":5.63,"avg_stages":1.07},{"year":"2019","mh":"20:30","mode":"BUS","sample_trips":285,"expanded_trips":293.9,"avg_travel_min":22.4,"avg_dist_km":7.31,"avg_stages":1.42},{"year":"2019","mh":"20:30","mode":"METRO","sample_trips":511,"expanded_trips":531.7,"avg_travel_min":28.06,"avg_dist_km":10.88,"avg_stages":1.34},{"year":"2019","mh":"20:30","mode":"METROTREN","sample_trips":10,"expanded_trips":8.0,"avg_travel_min":11.77,"avg_dist_km":0.0,"avg_stages":1.1},{"year":"2019","mh":"20:30","mode":"ZONA PAGA","sample_trips":80,"expanded_trips":90.6,"avg_travel_min":23.0,"avg_dist_km":5.77,"avg_stages":1.06},{"year":"2019","mh":"21:00","mode":"BUS","sample_trips":251,"expanded_trips":254.2,"avg_travel_min":22.15,"avg_dist_km":7.53,"avg_stages":1.39},{"year":"2019","mh":"21:00","mode":"METRO","sample_trips":519,"expanded_trips":538.9,"avg_travel_min":26.43,"avg_dist_km":10.2,"avg_stages":1.31},{"year":"2019","mh":"21:00","mode":"METROTREN","sample_trips":5,"expanded_trips":6.2,"avg_travel_min":15.16,"avg_dist_km":0.24,"avg_stages":1.4},{"year":"2019","mh":"21:00","mode":"ZONA PAGA","sample_trips":83,"expanded_trips":92.5,"avg_travel_min":22.9,"avg_dist_km":5.39,"avg_stages":1.27},{"year":"2019","mh":"21:30","mode":"BUS","sample_trips":239,"expanded_trips":242.1,"avg_travel_min":23.08,"avg_dist_km":7.72,"avg_stages":1.3},{"year":"2019","mh":"21:30","mode":"METRO","sample_trips":454,"expanded_trips":477.0,"avg_travel_min":28.86,"avg_dist_km":10.66,"avg_stages":1.37},{"year":"2019","mh":"21:30","mode":"METROTREN","sample_trips":8,"expanded_trips":11.9,"avg_travel_min":11.46,"avg_dist_km":0.0,"avg_stages":1.0},{"year":"2019","mh":"21:30","mode":"ZONA PAGA","sample_trips":39,"expanded_trips":35.8,"avg_travel_min":23.64,"avg_dist_km":5.2,"avg_stages":1.21},{"year":"2019","mh":"22:00","mode":"BUS","sample_trips":261,"expanded_trips":259.9,"avg_travel_min":21.96,"avg_dist_km":7.24,"avg_stages":1.36},{"year":"2019","mh":"22:00","mode":"METRO","sample_trips":509,"expanded_trips":500.5,"avg_travel_min":26.9,"avg_dist_km":9.87,"avg_stages":1.39},{"year":"2019","mh":"22:00","mode":"METROTREN","sample_trips":4,"expanded_trips":6.6,"avg_travel_min":26.66,"avg_dist_km":0.28,"avg_stages":1.75},{"year":"2019","mh":"22:00","mode":"ZONA PAGA","sample_trips":27,"expanded_trips":33.1,"avg_travel_min":20.65,"avg_dist_km":4.14,"avg_stages":1.04},{"year":"2019","mh":"22:30","mode":"BUS","sample_trips":188,"expanded_trips":200.7,"avg_travel_min":19.08,"avg_dist_km":6.9,"avg_stages":1.24},{"year":"2019","mh":"22:30","mode":"METRO","sample_trips":373,"expanded_trips":372.3,"avg_travel_min":26.13,"avg_dist_km":9.43,"avg_stages":1.39},{"year":"2019","mh":"22:30","mode":"METROTREN","sample_trips":1,"expanded_trips":0.0,"avg_travel_min":0.0,"avg_dist_km":0.0,"avg_stages":2.0},{"year":"2019","mh":"22:30","mode":"ZONA PAGA","sample_trips":5,"expanded_trips":5.6,"avg_travel_min":20.33,"avg_dist_km":6.35,"avg_stages":1.0},{"year":"2019","mh":"23:00","mode":"BUS","sample_trips":112,"expanded_trips":117.9,"avg_travel_min":13.51,"avg_dist_km":5.16,"avg_stages":1.14},{"year":"2019","mh":"23:00","mode":"METRO","sample_trips":20,"expanded_trips":22.1,"avg_travel_min":22.43,"avg_dist_km":7.55,"avg_stages":1.25},{"year":"2019","mh":"23:30","mode":"BUS","sample_trips":32,"expanded_trips":14.2,"avg_travel_min":11.38,"avg_dist_km":3.8,"avg_stages":1.19},{"year":"2019","mh":"23:30","mode":"METRO","sample_trips":2,"expanded_trips":3.0,"avg_travel_min":9.23,"avg_dist_km":4.09,"avg_stages":1.0},{"year":"2023","mh":"00:00","mode":"BUS","sample_trips":4,"expanded_trips":3.3,"avg_travel_min":18.39,"avg_dist_km":0.0,"avg_stages":1.0},{"year":"2023","mh":"00:30","mode":"BUS","sample_trips":5,"expanded_trips":3.6,"avg_travel_min":31.73,"avg_dist_km":4.19,"avg_stages":1.2},{"year":"2023","mh":"01:30","mode":"BUS","sample_trips":1,"expanded_trips":1.4,"avg_travel_min":25.68,"avg_dist_km":10.62,"avg_stages":1.0},{"year":"2023","mh":"04:30","mode":"BUS","sample_trips":1,"expanded_trips":0.0,"avg_travel_min":0.0,"avg_dist_km":0.0,"avg_stages":4.0},{"year":"2023","mh":"05:00","mode":"BUS","sample_trips":31,"expanded_trips":30.0,"avg_travel_min":48.42,"avg_dist_km":7.66,"avg_stages":1.71},{"year":"2023","mh":"05:00","mode":"ZONA PAGA","sample_trips":1,"expanded_trips":0.0,"avg_travel_min":0.0,"avg_dist_km":0.0,"avg_stages":2.0},{"year":"2023","mh":"05:30","mode":"BUS","sample_trips":215,"expanded_trips":195.0,"avg_travel_min":44.92,"avg_dist_km":9.61,"avg_stages":1.74},{"year":"2023","mh":"05:30","mode":"METRO","sample_trips":30,"expanded_trips":30.1,"avg_travel_min":30.27,"avg_dist_km":12.44,"avg_stages":1.4},{"year":"2023","mh":"05:30","mode":"METROTREN","sample_trips":9,"expanded_trips":9.3,"avg_travel_min":1.67,"avg_dist_km":0.57,"avg_stages":1.22},{"year":"2023","mh":"06:00","mode":"BUS","sample_trips":455,"expanded_trips":467.7,"avg_travel_min":44.0,"avg_dist_km":10.91,"avg_stages":1.89},{"year":"2023","mh":"06:00","mode":"METRO","sample_trips":301,"expanded_trips":314.9,"avg_travel_min":22.65,"avg_dist_km":9.2,"avg_stages":1.26},{"year":"2023","mh":"06:00","mode":"METROTREN","sample_trips":27,"expanded_trips":25.4,"avg_travel_min":35.58,"avg_dist_km":3.96,"avg_stages":2.0},{"year":"2023","mh":"06:00","mode":"ZONA PAGA","sample_trips":17,"expanded_trips":18.8,"avg_travel_min":41.85,"avg_dist_km":8.18,"avg_stages":1.35},{"year":"2023","mh":"06:30","mode":"BUS","sample_trips":939,"expanded_trips":933.2,"avg_travel_min":43.33,"avg_dist_km":9.65,"avg_stages":1.83},{"year":"2023","mh":"06:30","mode":"METRO","sample_trips":834,"expanded_trips":843.1,"avg_travel_min":24.71,"avg_dist_km":10.28,"avg_stages":1.24},{"year":"2023","mh":"06:30","mode":"METROTREN","sample_trips":49,"expanded_trips":55.7,"avg_travel_min":18.54,"avg_dist_km":2.49,"avg_stages":1.55},{"year":"2023","mh":"06:30","mode":"ZONA PAGA","sample_trips":63,"expanded_trips":67.8,"avg_travel_min":44.15,"avg_dist_km":7.27,"avg_stages":1.62},{"year":"2023","mh":"07:00","mode":"BUS","sample_trips":1328,"expanded_trips":1411.6,"avg_travel_min":40.22,"avg_dist_km":8.5,"avg_stages":1.71},{"year":"2023","mh":"07:00","mode":"METRO","sample_trips":1667,"expanded_trips":1769.9,"avg_travel_min":19.88,"avg_dist_km":9.06,"avg_stages":1.16},{"year":"2023","mh":"07:00","mode":"METROTREN","sample_trips":77,"expanded_trips":75.2,"avg_travel_min":17.15,"avg_dist_km":2.95,"avg_stages":1.55},{"year":"2023","mh":"07:00","mode":"ZONA PAGA","sample_trips":112,"expanded_trips":107.3,"avg_travel_min":41.62,"avg_dist_km":6.23,"avg_stages":1.4},{"year":"2023","mh":"07:30","mode":"BUS","sample_trips":1293,"expanded_trips":1331.7,"avg_travel_min":39.9,"avg_dist_km":7.93,"avg_stages":1.67},{"year":"2023","mh":"07:30","mode":"METRO","sample_trips":1956,"expanded_trips":2119.8,"avg_travel_min":19.7,"avg_dist_km":8.77,"avg_stages":1.11},{"year":"2023","mh":"07:30","mode":"METROTREN","sample_trips":74,"expanded_trips":78.6,"avg_travel_min":23.92,"avg_dist_km":4.36,"avg_stages":1.69},{"year":"2023","mh":"07:30","mode":"ZONA PAGA","sample_trips":119,"expanded_trips":127.1,"avg_travel_min":32.35,"avg_dist_km":4.86,"avg_stages":1.29},{"year":"2023","mh":"08:00","mode":"BUS","sample_trips":1182,"expanded_trips":1221.6,"avg_travel_min":34.72,"avg_dist_km":7.39,"avg_stages":1.64},{"year":"2023","mh":"08:00","mode":"METRO","sample_trips":1838,"expanded_trips":2004.8,"avg_travel_min":18.46,"avg_dist_km":8.38,"avg_stages":1.1},{"year":"2023","mh":"08:00","mode":"METROTREN","sample_trips":57,"expanded_trips":60.8,"avg_travel_min":21.51,"avg_dist_km":3.21,"avg_stages":1.74},{"year":"2023","mh":"08:00","mode":"ZONA PAGA","sample_trips":110,"expanded_trips":114.8,"avg_travel_min":33.87,"avg_dist_km":6.0,"avg_stages":1.33},{"year":"2023","mh":"08:30","mode":"BUS","sample_trips":1001,"expanded_trips":1003.2,"avg_travel_min":33.22,"avg_dist_km":7.08,"avg_stages":1.6},{"year":"2023","mh":"08:30","mode":"METRO","sample_trips":1364,"expanded_trips":1433.3,"avg_travel_min":18.25,"avg_dist_km":7.38,"avg_stages":1.1},{"year":"2023","mh":"08:30","mode":"METROTREN","sample_trips":29,"expanded_trips":31.7,"avg_travel_min":25.39,"avg_dist_km":4.26,"avg_stages":1.93},{"year":"2023","mh":"08:30","mode":"ZONA PAGA","sample_trips":76,"expanded_trips":75.7,"avg_travel_min":36.19,"avg_dist_km":6.01,"avg_stages":1.3},{"year":"2023","mh":"09:00","mode":"BUS","sample_trips":790,"expanded_trips":841.2,"avg_travel_min":32.11,"avg_dist_km":7.54,"avg_stages":1.62},{"year":"2023","mh":"09:00","mode":"METRO","sample_trips":1030,"expanded_trips":1103.3,"avg_travel_min":18.55,"avg_dist_km":8.06,"avg_stages":1.11},{"year":"2023","mh":"09:00","mode":"METROTREN","sample_trips":27,"expanded_trips":28.9,"avg_travel_min":25.02,"avg_dist_km":2.82,"avg_stages":1.85},{"year":"2023","mh":"09:00","mode":"ZONA PAGA","sample_trips":80,"expanded_trips":84.3,"avg_travel_min":24.53,"avg_dist_km":4.65,"avg_stages":1.33},{"year":"2023","mh":"09:30","mode":"BUS","sample_trips":617,"expanded_trips":650.6,"avg_travel_min":30.27,"avg_dist_km":6.84,"avg_stages":1.54},{"year":"2023","mh":"09:30","mode":"METRO","sample_trips":827,"expanded_trips":895.7,"avg_travel_min":17.24,"avg_dist_km":7.29,"avg_stages":1.11},{"year":"2023","mh":"09:30","mode":"METROTREN","sample_trips":21,"expanded_trips":22.4,"avg_travel_min":26.53,"avg_dist_km":3.96,"avg_stages":1.95},{"year":"2023","mh":"09:30","mode":"ZONA PAGA","sample_trips":70,"expanded_trips":72.2,"avg_travel_min":29.93,"avg_dist_km":4.8,"avg_stages":1.2},{"year":"2023","mh":"10:00","mode":"BUS","sample_trips":638,"expanded_trips":650.5,"avg_travel_min":29.88,"avg_dist_km":6.74,"avg_stages":1.55},{"year":"2023","mh":"10:00","mode":"METRO","sample_trips":703,"expanded_trips":753.8,"avg_travel_min":18.39,"avg_dist_km":7.53,"avg_stages":1.14},{"year":"2023","mh":"10:00","mode":"METROTREN","sample_trips":16,"expanded_trips":18.4,"avg_travel_min":25.05,"avg_dist_km":3.38,"avg_stages":1.69},{"year":"2023","mh":"10:00","mode":"ZONA PAGA","sample_trips":49,"expanded_trips":42.7,"avg_travel_min":30.96,"avg_dist_km":3.68,"avg_stages":1.31},{"year":"2023","mh":"10:30","mode":"BUS","sample_trips":563,"expanded_trips":611.1,"avg_travel_min":29.12,"avg_dist_km":6.85,"avg_stages":1.54},{"year":"2023","mh":"10:30","mode":"METRO","sample_trips":674,"expanded_trips":724.1,"avg_travel_min":16.31,"avg_dist_km":6.93,"avg_stages":1.14},{"year":"2023","mh":"10:30","mode":"METROTREN","sample_trips":13,"expanded_trips":10.5,"avg_travel_min":20.51,"avg_dist_km":2.61,"avg_stages":1.85},{"year":"2023","mh":"10:30","mode":"ZONA PAGA","sample_trips":37,"expanded_trips":42.7,"avg_travel_min":23.07,"avg_dist_km":4.82,"avg_stages":1.19},{"year":"2023","mh":"11:00","mode":"BUS","sample_trips":557,"expanded_trips":562.6,"avg_travel_min":30.0,"avg_dist_km":6.21,"avg_stages":1.5},{"year":"2023","mh":"11:00","mode":"METRO","sample_trips":673,"expanded_trips":690.0,"avg_travel_min":18.1,"avg_dist_km":6.78,"avg_stages":1.16},{"year":"2023","mh":"11:00","mode":"METROTREN","sample_trips":19,"expanded_trips":14.6,"avg_travel_min":17.93,"avg_dist_km":1.91,"avg_stages":1.63},{"year":"2023","mh":"11:00","mode":"ZONA PAGA","sample_trips":46,"expanded_trips":45.0,"avg_travel_min":24.85,"avg_dist_km":4.29,"avg_stages":1.24},{"year":"2023","mh":"11:30","mode":"BUS","sample_trips":546,"expanded_trips":536.6,"avg_travel_min":29.41,"avg_dist_km":6.32,"avg_stages":1.5},{"year":"2023","mh":"11:30","mode":"METRO","sample_trips":699,"expanded_trips":729.3,"avg_travel_min":18.12,"avg_dist_km":6.79,"avg_stages":1.18},{"year":"2023","mh":"11:30","mode":"METROTREN","sample_trips":15,"expanded_trips":13.2,"avg_travel_min":16.49,"avg_dist_km":1.05,"avg_stages":1.6},{"year":"2023","mh":"11:30","mode":"ZONA PAGA","sample_trips":45,"expanded_trips":46.8,"avg_travel_min":27.72,"avg_dist_km":5.4,"avg_stages":1.51},{"year":"2023","mh":"12:00","mode":"BUS","sample_trips":547,"expanded_trips":568.0,"avg_travel_min":28.89,"avg_dist_km":6.04,"avg_stages":1.48},{"year":"2023","mh":"12:00","mode":"METRO","sample_trips":734,"expanded_trips":769.8,"avg_travel_min":18.07,"avg_dist_km":7.13,"avg_stages":1.2},{"year":"2023","mh":"12:00","mode":"METROTREN","sample_trips":20,"expanded_trips":22.6,"avg_travel_min":13.16,"avg_dist_km":1.07,"avg_stages":1.3},{"year":"2023","mh":"12:00","mode":"ZONA PAGA","sample_trips":55,"expanded_trips":49.8,"avg_travel_min":30.76,"avg_dist_km":4.24,"avg_stages":1.29},{"year":"2023","mh":"12:30","mode":"BUS","sample_trips":545,"expanded_trips":575.9,"avg_travel_min":30.71,"avg_dist_km":6.17,"avg_stages":1.48},{"year":"2023","mh":"12:30","mode":"METRO","sample_trips":945,"expanded_trips":993.0,"avg_travel_min":18.76,"avg_dist_km":7.13,"avg_stages":1.18},{"year":"2023","mh":"12:30","mode":"METROTREN","sample_trips":19,"expanded_trips":18.1,"avg_travel_min":31.61,"avg_dist_km":3.32,"avg_stages":1.84},{"year":"2023","mh":"12:30","mode":"ZONA PAGA","sample_trips":52,"expanded_trips":55.2,"avg_travel_min":26.95,"avg_dist_km":5.03,"avg_stages":1.27},{"year":"2023","mh":"13:00","mode":"BUS","sample_trips":620,"expanded_trips":623.4,"avg_travel_min":30.03,"avg_dist_km":5.65,"avg_stages":1.56},{"year":"2023","mh":"13:00","mode":"METRO","sample_trips":1105,"expanded_trips":1193.8,"avg_travel_min":19.48,"avg_dist_km":7.5,"avg_stages":1.19},{"year":"2023","mh":"13:00","mode":"METROTREN","sample_trips":27,"expanded_trips":33.3,"avg_travel_min":24.82,"avg_dist_km":3.45,"avg_stages":1.7},{"year":"2023","mh":"13:00","mode":"ZONA PAGA","sample_trips":79,"expanded_trips":75.5,"avg_travel_min":23.27,"avg_dist_km":4.38,"avg_stages":1.25},{"year":"2023","mh":"13:30","mode":"BUS","sample_trips":590,"expanded_trips":608.8,"avg_travel_min":28.59,"avg_dist_km":5.85,"avg_stages":1.52},{"year":"2023","mh":"13:30","mode":"METRO","sample_trips":996,"expanded_trips":1052.6,"avg_travel_min":18.25,"avg_dist_km":6.89,"avg_stages":1.18},{"year":"2023","mh":"13:30","mode":"METROTREN","sample_trips":19,"expanded_trips":23.6,"avg_travel_min":15.18,"avg_dist_km":3.15,"avg_stages":1.63},{"year":"2023","mh":"13:30","mode":"ZONA PAGA","sample_trips":57,"expanded_trips":57.1,"avg_travel_min":24.46,"avg_dist_km":4.02,"avg_stages":1.23},{"year":"2023","mh":"14:00","mode":"BUS","sample_trips":606,"expanded_trips":650.2,"avg_travel_min":26.94,"avg_dist_km":5.35,"avg_stages":1.45},{"year":"2023","mh":"14:00","mode":"METRO","sample_trips":900,"expanded_trips":982.4,"avg_travel_min":17.57,"avg_dist_km":6.81,"avg_stages":1.21},{"year":"2023","mh":"14:00","mode":"METROTREN","sample_trips":15,"expanded_trips":18.5,"avg_travel_min":20.68,"avg_dist_km":3.61,"avg_stages":1.8},{"year":"2023","mh":"14:00","mode":"ZONA PAGA","sample_trips":59,"expanded_trips":68.3,"avg_travel_min":31.45,"avg_dist_km":5.19,"avg_stages":1.29},{"year":"2023","mh":"14:30","mode":"BUS","sample_trips":526,"expanded_trips":560.2,"avg_travel_min":27.37,"avg_dist_km":5.64,"avg_stages":1.44},{"year":"2023","mh":"14:30","mode":"METRO","sample_trips":758,"expanded_trips":791.2,"avg_travel_min":19.06,"avg_dist_km":6.68,"avg_stages":1.2},{"year":"2023","mh":"14:30","mode":"METROTREN","sample_trips":13,"expanded_trips":17.0,"avg_travel_min":19.09,"avg_dist_km":3.83,"avg_stages":1.62},{"year":"2023","mh":"14:30","mode":"ZONA PAGA","sample_trips":62,"expanded_trips":62.8,"avg_travel_min":21.52,"avg_dist_km":3.86,"avg_stages":1.21},{"year":"2023","mh":"15:00","mode":"BUS","sample_trips":523,"expanded_trips":534.4,"avg_travel_min":29.99,"avg_dist_km":5.36,"avg_stages":1.46},{"year":"2023","mh":"15:00","mode":"METRO","sample_trips":827,"expanded_trips":886.5,"avg_travel_min":18.1,"avg_dist_km":7.06,"avg_stages":1.19},{"year":"2023","mh":"15:00","mode":"METROTREN","sample_trips":11,"expanded_trips":9.3,"avg_travel_min":26.39,"avg_dist_km":1.33,"avg_stages":1.73},{"year":"2023","mh":"15:00","mode":"ZONA PAGA","sample_trips":50,"expanded_trips":47.0,"avg_travel_min":26.21,"avg_dist_km":3.88,"avg_stages":1.2},{"year":"2023","mh":"15:30","mode":"BUS","sample_trips":559,"expanded_trips":610.1,"avg_travel_min":29.8,"avg_dist_km":5.73,"avg_stages":1.46},{"year":"2023","mh":"15:30","mode":"METRO","sample_trips":901,"expanded_trips":947.5,"avg_travel_min":18.64,"avg_dist_km":6.86,"avg_stages":1.21},{"year":"2023","mh":"15:30","mode":"METROTREN","sample_trips":15,"expanded_trips":14.2,"avg_travel_min":17.45,"avg_dist_km":1.37,"avg_stages":1.47},{"year":"2023","mh":"15:30","mode":"ZONA PAGA","sample_trips":54,"expanded_trips":56.1,"avg_travel_min":32.9,"avg_dist_km":4.83,"avg_stages":1.19},{"year":"2023","mh":"16:00","mode":"BUS","sample_trips":593,"expanded_trips":587.9,"avg_travel_min":27.86,"avg_dist_km":5.02,"avg_stages":1.45},{"year":"2023","mh":"16:00","mode":"METRO","sample_trips":962,"expanded_trips":986.2,"avg_travel_min":19.33,"avg_dist_km":6.94,"avg_stages":1.21},{"year":"2023","mh":"16:00","mode":"METROTREN","sample_trips":19,"expanded_trips":15.6,"avg_travel_min":15.48,"avg_dist_km":1.66,"avg_stages":1.58},{"year":"2023","mh":"16:00","mode":"ZONA PAGA","sample_trips":84,"expanded_trips":78.8,"avg_travel_min":22.31,"avg_dist_km":4.48,"avg_stages":1.3},{"year":"2023","mh":"16:30","mode":"BUS","sample_trips":675,"expanded_trips":731.6,"avg_travel_min":31.89,"avg_dist_km":6.22,"avg_stages":1.47},{"year":"2023","mh":"16:30","mode":"METRO","sample_trips":1081,"expanded_trips":1105.1,"avg_travel_min":20.51,"avg_dist_km":7.31,"avg_stages":1.22},{"year":"2023","mh":"16:30","mode":"METROTREN","sample_trips":12,"expanded_trips":8.9,"avg_travel_min":19.11,"avg_dist_km":3.0,"avg_stages":1.42},{"year":"2023","mh":"16:30","mode":"ZONA PAGA","sample_trips":91,"expanded_trips":86.1,"avg_travel_min":36.0,"avg_dist_km":5.75,"avg_stages":1.38},{"year":"2023","mh":"17:00","mode":"BUS","sample_trips":831,"expanded_trips":813.5,"avg_travel_min":33.39,"avg_dist_km":5.55,"avg_stages":1.55},{"year":"2023","mh":"17:00","mode":"METRO","sample_trips":1730,"expanded_trips":1833.6,"avg_travel_min":20.17,"avg_dist_km":7.59,"avg_stages":1.24},{"year":"2023","mh":"17:00","mode":"METROTREN","sample_trips":27,"expanded_trips":35.8,"avg_travel_min":17.27,"avg_dist_km":2.82,"avg_stages":1.59},{"year":"2023","mh":"17:00","mode":"ZONA PAGA","sample_trips":133,"expanded_trips":136.7,"avg_travel_min":31.02,"avg_dist_km":5.25,"avg_stages":1.35},{"year":"2023","mh":"17:30","mode":"BUS","sample_trips":946,"expanded_trips":967.8,"avg_travel_min":31.6,"avg_dist_km":5.48,"avg_stages":1.49},{"year":"2023","mh":"17:30","mode":"METRO","sample_trips":2019,"expanded_trips":2110.1,"avg_travel_min":19.99,"avg_dist_km":7.5,"avg_stages":1.21},{"year":"2023","mh":"17:30","mode":"METROTREN","sample_trips":25,"expanded_trips":32.2,"avg_travel_min":15.14,"avg_dist_km":2.35,"avg_stages":1.56},{"year":"2023","mh":"17:30","mode":"ZONA PAGA","sample_trips":195,"expanded_trips":209.9,"avg_travel_min":34.77,"avg_dist_km":5.65,"avg_stages":1.38},{"year":"2023","mh":"18:00","mode":"BUS","sample_trips":973,"expanded_trips":954.2,"avg_travel_min":35.12,"avg_dist_km":5.85,"avg_stages":1.5},{"year":"2023","mh":"18:00","mode":"METRO","sample_trips":2474,"expanded_trips":2557.1,"avg_travel_min":20.78,"avg_dist_km":7.71,"avg_stages":1.21},{"year":"2023","mh":"18:00","mode":"METROTREN","sample_trips":34,"expanded_trips":38.0,"avg_travel_min":18.64,"avg_dist_km":2.69,"avg_stages":1.59},{"year":"2023","mh":"18:00","mode":"ZONA PAGA","sample_trips":192,"expanded_trips":211.1,"avg_travel_min":35.53,"avg_dist_km":6.21,"avg_stages":1.43},{"year":"2023","mh":"18:30","mode":"BUS","sample_trips":731,"expanded_trips":774.5,"avg_travel_min":32.17,"avg_dist_km":5.54,"avg_stages":1.39},{"year":"2023","mh":"18:30","mode":"METRO","sample_trips":1989,"expanded_trips":2061.8,"avg_travel_min":20.61,"avg_dist_km":7.48,"avg_stages":1.22},{"year":"2023","mh":"18:30","mode":"METROTREN","sample_trips":24,"expanded_trips":21.9,"avg_travel_min":14.74,"avg_dist_km":1.92,"avg_stages":1.42},{"year":"2023","mh":"18:30","mode":"ZONA PAGA","sample_trips":192,"expanded_trips":207.8,"avg_travel_min":30.45,"avg_dist_km":4.69,"avg_stages":1.26},{"year":"2023","mh":"19:00","mode":"BUS","sample_trips":594,"expanded_trips":583.7,"avg_travel_min":29.7,"avg_dist_km":5.12,"avg_stages":1.4},{"year":"2023","mh":"19:00","mode":"METRO","sample_trips":1366,"expanded_trips":1386.5,"avg_travel_min":20.89,"avg_dist_km":7.48,"avg_stages":1.24},{"year":"2023","mh":"19:00","mode":"METROTREN","sample_trips":7,"expanded_trips":10.6,"avg_travel_min":0.0,"avg_dist_km":0.0,"avg_stages":1.0},{"year":"2023","mh":"19:00","mode":"ZONA PAGA","sample_trips":164,"expanded_trips":173.0,"avg_travel_min":29.89,"avg_dist_km":5.13,"avg_stages":1.26},{"year":"2023","mh":"19:30","mode":"BUS","sample_trips":401,"expanded_trips":407.5,"avg_travel_min":26.06,"avg_dist_km":5.16,"avg_stages":1.38},{"year":"2023","mh":"19:30","mode":"METRO","sample_trips":896,"expanded_trips":879.1,"avg_travel_min":21.37,"avg_dist_km":7.54,"avg_stages":1.25},{"year":"2023","mh":"19:30","mode":"METROTREN","sample_trips":9,"expanded_trips":9.9,"avg_travel_min":3.06,"avg_dist_km":0.81,"avg_stages":1.22},{"year":"2023","mh":"19:30","mode":"ZONA PAGA","sample_trips":108,"expanded_trips":116.5,"avg_travel_min":25.4,"avg_dist_km":5.07,"avg_stages":1.24},{"year":"2023","mh":"20:00","mode":"BUS","sample_trips":397,"expanded_trips":384.3,"avg_travel_min":27.78,"avg_dist_km":5.62,"avg_stages":1.41},{"year":"2023","mh":"20:00","mode":"METRO","sample_trips":846,"expanded_trips":825.8,"avg_travel_min":20.67,"avg_dist_km":7.24,"avg_stages":1.27},{"year":"2023","mh":"20:00","mode":"METROTREN","sample_trips":11,"expanded_trips":11.9,"avg_travel_min":0.0,"avg_dist_km":0.0,"avg_stages":1.27},{"year":"2023","mh":"20:00","mode":"ZONA PAGA","sample_trips":77,"expanded_trips":74.8,"avg_travel_min":25.04,"avg_dist_km":3.72,"avg_stages":1.21},{"year":"2023","mh":"20:30","mode":"BUS","sample_trips":272,"expanded_trips":256.7,"avg_travel_min":27.46,"avg_dist_km":5.15,"avg_stages":1.45},{"year":"2023","mh":"20:30","mode":"METRO","sample_trips":602,"expanded_trips":616.4,"avg_travel_min":20.31,"avg_dist_km":7.27,"avg_stages":1.24},{"year":"2023","mh":"20:30","mode":"METROTREN","sample_trips":15,"expanded_trips":15.8,"avg_travel_min":15.79,"avg_dist_km":0.56,"avg_stages":1.27},{"year":"2023","mh":"20:30","mode":"ZONA PAGA","sample_trips":27,"expanded_trips":26.3,"avg_travel_min":29.96,"avg_dist_km":3.42,"avg_stages":1.37},{"year":"2023","mh":"21:00","mode":"BUS","sample_trips":200,"expanded_trips":202.5,"avg_travel_min":24.67,"avg_dist_km":5.06,"avg_stages":1.42},{"year":"2023","mh":"21:00","mode":"METRO","sample_trips":471,"expanded_trips":472.3,"avg_travel_min":20.46,"avg_dist_km":7.12,"avg_stages":1.26},{"year":"2023","mh":"21:00","mode":"METROTREN","sample_trips":6,"expanded_trips":7.7,"avg_travel_min":15.25,"avg_dist_km":0.62,"avg_stages":1.5},{"year":"2023","mh":"21:00","mode":"ZONA PAGA","sample_trips":6,"expanded_trips":6.4,"avg_travel_min":18.28,"avg_dist_km":3.37,"avg_stages":1.0},{"year":"2023","mh":"21:30","mode":"BUS","sample_trips":147,"expanded_trips":140.6,"avg_travel_min":25.4,"avg_dist_km":4.87,"avg_stages":1.35},{"year":"2023","mh":"21:30","mode":"METRO","sample_trips":372,"expanded_trips":379.3,"avg_travel_min":19.01,"avg_dist_km":6.63,"avg_stages":1.23},{"year":"2023","mh":"21:30","mode":"METROTREN","sample_trips":3,"expanded_trips":4.5,"avg_travel_min":0.0,"avg_dist_km":0.0,"avg_stages":1.0},{"year":"2023","mh":"21:30","mode":"ZONA PAGA","sample_trips":6,"expanded_trips":8.8,"avg_travel_min":27.37,"avg_dist_km":3.81,"avg_stages":1.0},{"year":"2023","mh":"22:00","mode":"BUS","sample_trips":124,"expanded_trips":124.5,"avg_travel_min":26.89,"avg_dist_km":6.06,"avg_stages":1.4},{"year":"2023","mh":"22:00","mode":"METRO","sample_trips":303,"expanded_trips":317.7,"avg_travel_min":20.12,"avg_dist_km":7.54,"avg_stages":1.2},{"year":"2023","mh":"22:00","mode":"METROTREN","sample_trips":3,"expanded_trips":2.0,"avg_travel_min":39.72,"avg_dist_km":0.53,"avg_stages":1.67},{"year":"2023","mh":"22:00","mode":"ZONA PAGA","sample_trips":1,"expanded_trips":1.3,"avg_travel_min":4.88,"avg_dist_km":1.14,"avg_stages":1.0},{"year":"2023","mh":"22:30","mode":"BUS","sample_trips":56,"expanded_trips":68.2,"avg_travel_min":19.53,"avg_dist_km":4.79,"avg_stages":1.18},{"year":"2023","mh":"22:30","mode":"METRO","sample_trips":123,"expanded_trips":131.3,"avg_travel_min":18.61,"avg_dist_km":7.48,"avg_stages":1.15},{"year":"2023","mh":"22:30","mode":"METROTREN","sample_trips":1,"expanded_trips":0.0,"avg_travel_min":0.0,"avg_dist_km":0.0,"avg_stages":1.0},{"year":"2023","mh":"22:30","mode":"ZONA PAGA","sample_trips":2,"expanded_trips":1.6,"avg_travel_min":43.0,"avg_dist_km":4.51,"avg_stages":1.0},{"year":"2023","mh":"23:00","mode":"BUS","sample_trips":27,"expanded_trips":29.5,"avg_travel_min":20.45,"avg_dist_km":2.97,"avg_stages":1.11},{"year":"2023","mh":"23:00","mode":"METRO","sample_trips":5,"expanded_trips":7.7,"avg_travel_min":14.5,"avg_dist_km":8.86,"avg_stages":1.4},{"year":"2023","mh":"23:30","mode":"BUS","sample_trips":11,"expanded_trips":7.6,"avg_travel_min":12.23,"avg_dist_km":1.89,"avg_stages":1.18}],"od_flows":[{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":302.0,"intermodal_trips":4.9,"avg_min":6.9,"avg_km":2.07,"avg_stages":1.02},{"year":"2019","origin":"SANTIAGO","dest":"ESTACION CENTRAL","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":264.6,"intermodal_trips":16.4,"avg_min":8.1,"avg_km":2.72,"avg_stages":1.06},{"year":"2019","origin":"SANTIAGO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":264.2,"intermodal_trips":5.0,"avg_min":12.9,"avg_km":4.62,"avg_stages":1.02},{"year":"2019","origin":"MAIPU","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":261.4,"intermodal_trips":195.4,"avg_min":49.2,"avg_km":16.13,"avg_stages":1.82},{"year":"2019","origin":"ESTACION CENTRAL","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":259.0,"intermodal_trips":1.4,"avg_min":7.6,"avg_km":2.66,"avg_stages":1.0},{"year":"2019","origin":"ESTACION CENTRAL","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":251.4,"intermodal_trips":0.0,"avg_min":7.2,"avg_km":2.66,"avg_stages":1.0},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":232.2,"intermodal_trips":1.3,"avg_min":8.1,"avg_km":2.53,"avg_stages":1.01},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":224.4,"intermodal_trips":1.2,"avg_min":7.0,"avg_km":2.15,"avg_stages":1.01},{"year":"2019","origin":"LAS CONDES","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":223.7,"intermodal_trips":3.7,"avg_min":19.4,"avg_km":8.54,"avg_stages":1.02},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":216.7,"intermodal_trips":18.1,"avg_min":21.6,"avg_km":4.64,"avg_stages":1.21},{"year":"2019","origin":"SANTIAGO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":211.3,"intermodal_trips":0.0,"avg_min":12.7,"avg_km":4.87,"avg_stages":1.0},{"year":"2019","origin":"PROVIDENCIA","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":197.4,"intermodal_trips":1.2,"avg_min":12.7,"avg_km":4.66,"avg_stages":1.01},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":196.9,"intermodal_trips":7.1,"avg_min":16.3,"avg_km":4.32,"avg_stages":1.1},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":192.2,"intermodal_trips":15.3,"avg_min":17.0,"avg_km":4.72,"avg_stages":1.19},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":191.2,"intermodal_trips":8.0,"avg_min":20.9,"avg_km":4.76,"avg_stages":1.12},{"year":"2019","origin":"PUENTE ALTO","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":188.0,"intermodal_trips":179.2,"avg_min":61.9,"avg_km":22.56,"avg_stages":1.96},{"year":"2019","origin":"LO PRADO","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":187.8,"intermodal_trips":0.0,"avg_min":13.8,"avg_km":5.84,"avg_stages":1.0},{"year":"2019","origin":"PROVIDENCIA","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":177.7,"intermodal_trips":2.5,"avg_min":13.3,"avg_km":4.96,"avg_stages":1.01},{"year":"2019","origin":"SANTIAGO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":170.8,"intermodal_trips":0.0,"avg_min":12.0,"avg_km":4.56,"avg_stages":1.0},{"year":"2019","origin":"SANTIAGO","dest":"ESTACION CENTRAL","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":169.0,"intermodal_trips":10.4,"avg_min":9.1,"avg_km":2.92,"avg_stages":1.06},{"year":"2019","origin":"LAS CONDES","dest":"MACUL","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":168.0,"intermodal_trips":0.0,"avg_min":32.3,"avg_km":14.48,"avg_stages":1.0},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":167.3,"intermodal_trips":2.6,"avg_min":8.4,"avg_km":2.35,"avg_stages":1.02},{"year":"2019","origin":"PROVIDENCIA","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":165.5,"intermodal_trips":0.0,"avg_min":11.5,"avg_km":4.35,"avg_stages":1.0},{"year":"2019","origin":"PUENTE ALTO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":155.5,"intermodal_trips":1.2,"avg_min":40.9,"avg_km":20.3,"avg_stages":1.01},{"year":"2019","origin":"PROVIDENCIA","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":152.7,"intermodal_trips":1.3,"avg_min":12.3,"avg_km":4.51,"avg_stages":1.01},{"year":"2019","origin":"ESTACION CENTRAL","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":150.6,"intermodal_trips":0.0,"avg_min":8.0,"avg_km":2.86,"avg_stages":1.0},{"year":"2019","origin":"PROVIDENCIA","dest":"ESTACION CENTRAL","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":150.5,"intermodal_trips":12.6,"avg_min":17.1,"avg_km":6.62,"avg_stages":1.08},{"year":"2019","origin":"MAIPU","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":150.4,"intermodal_trips":108.5,"avg_min":44.2,"avg_km":15.74,"avg_stages":1.84},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":150.3,"intermodal_trips":1.2,"avg_min":8.4,"avg_km":2.43,"avg_stages":1.01},{"year":"2019","origin":"PUENTE ALTO","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":149.3,"intermodal_trips":2.4,"avg_min":47.8,"avg_km":20.83,"avg_stages":1.02},{"year":"2019","origin":"SANTIAGO","dest":"PUENTE ALTO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":148.2,"intermodal_trips":77.1,"avg_min":59.5,"avg_km":21.97,"avg_stages":1.52},{"year":"2019","origin":"PUENTE ALTO","dest":"PROVIDENCIA","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":146.0,"intermodal_trips":139.4,"avg_min":58.2,"avg_km":22.71,"avg_stages":2.01},{"year":"2019","origin":"ESTACION CENTRAL","dest":"PROVIDENCIA","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":145.9,"intermodal_trips":0.0,"avg_min":16.7,"avg_km":6.6,"avg_stages":1.0},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":145.8,"intermodal_trips":5.2,"avg_min":13.8,"avg_km":3.88,"avg_stages":1.09},{"year":"2019","origin":"PROVIDENCIA","dest":"PUENTE ALTO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":144.7,"intermodal_trips":61.4,"avg_min":52.8,"avg_km":21.83,"avg_stages":1.43},{"year":"2019","origin":"MACUL","dest":"LAS CONDES","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":144.6,"intermodal_trips":29.9,"avg_min":37.2,"avg_km":15.12,"avg_stages":1.21},{"year":"2019","origin":"SANTIAGO","dest":"LAS CONDES","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":144.5,"intermodal_trips":34.2,"avg_min":25.7,"avg_km":9.4,"avg_stages":1.23},{"year":"2019","origin":"PROVIDENCIA","dest":"PROVIDENCIA","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":142.1,"intermodal_trips":0.0,"avg_min":5.8,"avg_km":2.19,"avg_stages":1.0},{"year":"2019","origin":"MAIPU","dest":"PROVIDENCIA","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":137.2,"intermodal_trips":134.6,"avg_min":58.1,"avg_km":20.95,"avg_stages":2.02},{"year":"2019","origin":"SANTIAGO","dest":"MAIPU","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":136.8,"intermodal_trips":91.3,"avg_min":48.4,"avg_km":16.37,"avg_stages":1.7},{"year":"2019","origin":"LAS CONDES","dest":"LAS CONDES","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":133.8,"intermodal_trips":11.7,"avg_min":19.1,"avg_km":4.7,"avg_stages":1.23},{"year":"2019","origin":"ESTACION CENTRAL","dest":"PROVIDENCIA","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":133.6,"intermodal_trips":0.0,"avg_min":16.8,"avg_km":6.62,"avg_stages":1.0},{"year":"2019","origin":"PROVIDENCIA","dest":"PUENTE ALTO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":133.4,"intermodal_trips":58.3,"avg_min":51.5,"avg_km":21.32,"avg_stages":1.44},{"year":"2019","origin":"LO PRADO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":131.4,"intermodal_trips":1.2,"avg_min":24.0,"avg_km":10.04,"avg_stages":1.01},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":128.7,"intermodal_trips":2.7,"avg_min":20.0,"avg_km":4.26,"avg_stages":1.03},{"year":"2019","origin":"RECOLETA","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":127.3,"intermodal_trips":2.7,"avg_min":16.6,"avg_km":6.87,"avg_stages":1.02},{"year":"2019","origin":"LA CISTERNA","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":125.8,"intermodal_trips":0.0,"avg_min":22.3,"avg_km":10.36,"avg_stages":1.0},{"year":"2019","origin":"PROVIDENCIA","dest":"MAIPU","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":125.1,"intermodal_trips":78.8,"avg_min":53.2,"avg_km":19.92,"avg_stages":1.64},{"year":"2019","origin":"SANTIAGO","dest":"LAS CONDES","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":124.0,"intermodal_trips":23.5,"avg_min":26.6,"avg_km":9.72,"avg_stages":1.2},{"year":"2019","origin":"SANTIAGO","dest":"MAIPU","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":123.4,"intermodal_trips":72.3,"avg_min":45.7,"avg_km":15.77,"avg_stages":1.64},{"year":"2019","origin":"LA FLORIDA","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":122.8,"intermodal_trips":1.2,"avg_min":31.7,"avg_km":14.03,"avg_stages":1.01},{"year":"2019","origin":"QUILICURA","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":122.0,"intermodal_trips":83.4,"avg_min":51.5,"avg_km":16.07,"avg_stages":1.8},{"year":"2019","origin":"SANTIAGO","dest":"PUENTE ALTO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":121.8,"intermodal_trips":50.9,"avg_min":57.6,"avg_km":21.26,"avg_stages":1.42},{"year":"2019","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":118.8,"intermodal_trips":0.0,"avg_min":20.0,"avg_km":3.12,"avg_stages":1.0},{"year":"2019","origin":"MAIPU","dest":"ESTACION CENTRAL","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":117.1,"intermodal_trips":56.4,"avg_min":41.5,"avg_km":11.8,"avg_stages":1.57},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":105.3,"intermodal_trips":11.9,"avg_min":10.2,"avg_km":2.31,"avg_stages":1.14},{"year":"2019","origin":"LA FLORIDA","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":103.7,"intermodal_trips":96.0,"avg_min":52.7,"avg_km":17.66,"avg_stages":1.98},{"year":"2019","origin":"MAIPU","dest":"PROVIDENCIA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":103.3,"intermodal_trips":99.3,"avg_min":49.9,"avg_km":20.42,"avg_stages":2.08},{"year":"2019","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":101.4,"intermodal_trips":10.3,"avg_min":13.6,"avg_km":4.01,"avg_stages":1.18},{"year":"2019","origin":"PUDAHUEL","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":100.5,"intermodal_trips":91.3,"avg_min":37.2,"avg_km":12.73,"avg_stages":1.91},{"year":"2019","origin":"LAS CONDES","dest":"LAS CONDES","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":98.8,"intermodal_trips":20.1,"avg_min":21.9,"avg_km":5.23,"avg_stages":1.35},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":98.1,"intermodal_trips":6.6,"avg_min":9.0,"avg_km":1.99,"avg_stages":1.09},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"NOCTURNO","purpose":"HOGAR","trips":96.2,"intermodal_trips":1.6,"avg_min":15.7,"avg_km":4.66,"avg_stages":1.16},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":94.6,"intermodal_trips":0.0,"avg_min":19.1,"avg_km":4.52,"avg_stages":1.0},{"year":"2019","origin":"LAS CONDES","dest":"LAS CONDES","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":94.2,"intermodal_trips":6.7,"avg_min":12.8,"avg_km":3.6,"avg_stages":1.13},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":89.9,"intermodal_trips":9.6,"avg_min":13.9,"avg_km":2.52,"avg_stages":1.17},{"year":"2019","origin":"LAS CONDES","dest":"LAS CONDES","mode":"BUS","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":88.7,"intermodal_trips":7.0,"avg_min":17.9,"avg_km":3.87,"avg_stages":1.19},{"year":"2019","origin":"PUENTE ALTO","dest":"PROVIDENCIA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":88.1,"intermodal_trips":84.2,"avg_min":56.0,"avg_km":22.76,"avg_stages":2.0},{"year":"2019","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":87.7,"intermodal_trips":7.8,"avg_min":16.0,"avg_km":3.66,"avg_stages":1.22},{"year":"2019","origin":"LA FLORIDA","dest":"LA FLORIDA","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":86.3,"intermodal_trips":0.0,"avg_min":18.6,"avg_km":3.08,"avg_stages":1.0},{"year":"2019","origin":"PUENTE ALTO","dest":"MACUL","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":85.1,"intermodal_trips":71.7,"avg_min":43.2,"avg_km":14.1,"avg_stages":1.91},{"year":"2019","origin":"PUENTE ALTO","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":84.3,"intermodal_trips":78.5,"avg_min":60.4,"avg_km":22.9,"avg_stages":1.94},{"year":"2019","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":83.9,"intermodal_trips":0.0,"avg_min":25.3,"avg_km":3.95,"avg_stages":1.0},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":80.2,"intermodal_trips":6.8,"avg_min":10.0,"avg_km":1.91,"avg_stages":1.15},{"year":"2019","origin":"QUILICURA","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":79.8,"intermodal_trips":58.5,"avg_min":42.9,"avg_km":16.27,"avg_stages":1.77},{"year":"2019","origin":"LA FLORIDA","dest":"LA FLORIDA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":79.1,"intermodal_trips":0.0,"avg_min":23.2,"avg_km":3.29,"avg_stages":1.02},{"year":"2019","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":79.0,"intermodal_trips":4.2,"avg_min":16.5,"avg_km":4.13,"avg_stages":1.09},{"year":"2019","origin":"CERRO NAVIA","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":77.8,"intermodal_trips":56.6,"avg_min":37.4,"avg_km":10.98,"avg_stages":1.75},{"year":"2019","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":75.9,"intermodal_trips":9.3,"avg_min":20.1,"avg_km":4.45,"avg_stages":1.25},{"year":"2019","origin":"SANTIAGO","dest":"MAIPU","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":70.8,"intermodal_trips":1.4,"avg_min":44.4,"avg_km":14.13,"avg_stages":1.11},{"year":"2019","origin":"LA FLORIDA","dest":"LA FLORIDA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":70.1,"intermodal_trips":7.7,"avg_min":12.6,"avg_km":4.63,"avg_stages":1.16},{"year":"2019","origin":"ESTACION CENTRAL","dest":"MAIPU","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":68.0,"intermodal_trips":0.0,"avg_min":31.8,"avg_km":9.87,"avg_stages":1.06},{"year":"2019","origin":"PENALOLEN","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":66.3,"intermodal_trips":44.9,"avg_min":50.2,"avg_km":14.01,"avg_stages":1.8},{"year":"2019","origin":"PROVIDENCIA","dest":"PROVIDENCIA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":66.1,"intermodal_trips":1.3,"avg_min":9.7,"avg_km":1.85,"avg_stages":1.06},{"year":"2019","origin":"LA FLORIDA","dest":"PROVIDENCIA","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":65.7,"intermodal_trips":60.6,"avg_min":46.0,"avg_km":15.65,"avg_stages":1.96},{"year":"2019","origin":"PUDAHUEL","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":64.7,"intermodal_trips":43.8,"avg_min":33.7,"avg_km":11.13,"avg_stages":1.73},{"year":"2019","origin":"LAS CONDES","dest":"LAS CONDES","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":53.5,"intermodal_trips":0.0,"avg_min":42.1,"avg_km":4.69,"avg_stages":1.0},{"year":"2019","origin":"LA CISTERNA","dest":"EL BOSQUE","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":50.0,"intermodal_trips":0.0,"avg_min":19.4,"avg_km":3.81,"avg_stages":1.0},{"year":"2019","origin":"NUNOA","dest":"NUNOA","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":47.4,"intermodal_trips":2.5,"avg_min":9.7,"avg_km":2.22,"avg_stages":1.05},{"year":"2019","origin":"NUNOA","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":41.4,"intermodal_trips":5.2,"avg_min":30.5,"avg_km":6.62,"avg_stages":1.13},{"year":"2019","origin":"PUDAHUEL","dest":"PUDAHUEL","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":40.1,"intermodal_trips":0.0,"avg_min":31.4,"avg_km":2.13,"avg_stages":1.0},{"year":"2019","origin":"NUNOA","dest":"PENALOLEN","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":36.3,"intermodal_trips":2.6,"avg_min":23.2,"avg_km":5.52,"avg_stages":1.11},{"year":"2019","origin":"NUNOA","dest":"NUNOA","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":35.9,"intermodal_trips":0.0,"avg_min":10.3,"avg_km":2.08,"avg_stages":1.0},{"year":"2019","origin":"PROVIDENCIA","dest":"PROVIDENCIA","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":34.7,"intermodal_trips":0.0,"avg_min":11.9,"avg_km":2.14,"avg_stages":1.0},{"year":"2019","origin":"LA CISTERNA","dest":"EL BOSQUE","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":34.0,"intermodal_trips":0.0,"avg_min":19.8,"avg_km":4.43,"avg_stages":1.0},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"NOCTURNO","purpose":"HOGAR","trips":32.7,"intermodal_trips":2.8,"avg_min":16.1,"avg_km":3.61,"avg_stages":1.09},{"year":"2019","origin":"NUNOA","dest":"NUNOA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":31.2,"intermodal_trips":6.5,"avg_min":15.7,"avg_km":2.65,"avg_stages":1.21},{"year":"2019","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"NOCTURNO","purpose":"HOGAR","trips":31.1,"intermodal_trips":1.3,"avg_min":14.2,"avg_km":3.16,"avg_stages":1.04},{"year":"2019","origin":"PROVIDENCIA","dest":"PROVIDENCIA","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":31.1,"intermodal_trips":0.0,"avg_min":12.9,"avg_km":1.79,"avg_stages":1.0},{"year":"2019","origin":"ESTACION CENTRAL","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":30.9,"intermodal_trips":0.0,"avg_min":18.5,"avg_km":1.9,"avg_stages":1.04},{"year":"2019","origin":"LA CISTERNA","dest":"LA CISTERNA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":30.8,"intermodal_trips":0.0,"avg_min":10.5,"avg_km":1.58,"avg_stages":1.0},{"year":"2019","origin":"LA CISTERNA","dest":"SAN BERNARDO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":30.0,"intermodal_trips":0.0,"avg_min":29.2,"avg_km":6.95,"avg_stages":1.0},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":27.0,"intermodal_trips":1.4,"avg_min":15.3,"avg_km":1.85,"avg_stages":1.05},{"year":"2019","origin":"QUILICURA","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":26.4,"intermodal_trips":19.6,"avg_min":55.7,"avg_km":15.78,"avg_stages":1.79},{"year":"2019","origin":"MAIPU","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":25.8,"intermodal_trips":0.0,"avg_min":21.7,"avg_km":3.43,"avg_stages":1.0},{"year":"2019","origin":"NUNOA","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":25.6,"intermodal_trips":4.0,"avg_min":28.2,"avg_km":5.58,"avg_stages":1.15},{"year":"2019","origin":"NUNOA","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":25.2,"intermodal_trips":15.0,"avg_min":62.4,"avg_km":19.86,"avg_stages":1.85},{"year":"2019","origin":"HUECHURABA","dest":"QUILICURA","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":25.0,"intermodal_trips":1.3,"avg_min":23.9,"avg_km":6.79,"avg_stages":1.17},{"year":"2019","origin":"NUNOA","dest":"PENALOLEN","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":24.9,"intermodal_trips":2.7,"avg_min":18.2,"avg_km":4.79,"avg_stages":1.11},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":24.4,"intermodal_trips":1.7,"avg_min":34.0,"avg_km":1.88,"avg_stages":1.06},{"year":"2019","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":24.1,"intermodal_trips":1.4,"avg_min":25.2,"avg_km":4.35,"avg_stages":1.06},{"year":"2019","origin":"MAIPU","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":23.9,"intermodal_trips":13.4,"avg_min":62.9,"avg_km":17.55,"avg_stages":1.56},{"year":"2019","origin":"NUNOA","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":23.8,"intermodal_trips":23.8,"avg_min":48.7,"avg_km":17.5,"avg_stages":2.44},{"year":"2019","origin":"SANTIAGO","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":23.3,"intermodal_trips":0.0,"avg_min":12.6,"avg_km":1.84,"avg_stages":1.06},{"year":"2019","origin":"NUNOA","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":23.3,"intermodal_trips":16.8,"avg_min":74.0,"avg_km":20.78,"avg_stages":2.0},{"year":"2019","origin":"SANTIAGO","dest":"QUINTA NORMAL","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":22.8,"intermodal_trips":1.4,"avg_min":31.7,"avg_km":5.14,"avg_stages":1.06},{"year":"2019","origin":"QUILICURA","dest":"QUILICURA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":22.6,"intermodal_trips":1.3,"avg_min":25.7,"avg_km":6.03,"avg_stages":1.06},{"year":"2019","origin":"HUECHURABA","dest":"QUILICURA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":22.3,"intermodal_trips":1.4,"avg_min":55.1,"avg_km":6.03,"avg_stages":1.06},{"year":"2019","origin":"LA FLORIDA","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":21.2,"intermodal_trips":0.0,"avg_min":61.2,"avg_km":11.97,"avg_stages":1.0},{"year":"2019","origin":"NUNOA","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":21.1,"intermodal_trips":19.8,"avg_min":43.6,"avg_km":16.78,"avg_stages":2.19},{"year":"2019","origin":"ESTACION CENTRAL","dest":"SAN BERNARDO","mode":"METROTREN","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":14.5,"intermodal_trips":14.5,"avg_min":44.7,"avg_km":3.93,"avg_stages":2.0},{"year":"2023","origin":"PROVIDENCIA","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":285.4,"intermodal_trips":7.8,"avg_min":13.6,"avg_km":5.13,"avg_stages":1.03},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":231.4,"intermodal_trips":2.5,"avg_min":8.9,"avg_km":1.99,"avg_stages":1.01},{"year":"2023","origin":"SANTIAGO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":218.0,"intermodal_trips":0.0,"avg_min":13.2,"avg_km":4.77,"avg_stages":1.0},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":208.9,"intermodal_trips":1.4,"avg_min":7.7,"avg_km":2.31,"avg_stages":1.01},{"year":"2023","origin":"SANTIAGO","dest":"ESTACION CENTRAL","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":204.6,"intermodal_trips":16.9,"avg_min":11.3,"avg_km":3.24,"avg_stages":1.08},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":203.8,"intermodal_trips":1.3,"avg_min":8.7,"avg_km":2.28,"avg_stages":1.01},{"year":"2023","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":200.5,"intermodal_trips":7.3,"avg_min":20.9,"avg_km":4.57,"avg_stages":1.09},{"year":"2023","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":191.1,"intermodal_trips":8.6,"avg_min":16.3,"avg_km":3.66,"avg_stages":1.11},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":187.8,"intermodal_trips":0.0,"avg_min":8.6,"avg_km":2.23,"avg_stages":1.0},{"year":"2023","origin":"PROVIDENCIA","dest":"PUENTE ALTO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":181.2,"intermodal_trips":39.6,"avg_min":41.7,"avg_km":20.89,"avg_stages":1.22},{"year":"2023","origin":"PROVIDENCIA","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":179.5,"intermodal_trips":2.6,"avg_min":13.2,"avg_km":4.81,"avg_stages":1.01},{"year":"2023","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":178.6,"intermodal_trips":11.6,"avg_min":24.1,"avg_km":4.95,"avg_stages":1.2},{"year":"2023","origin":"SANTIAGO","dest":"LAS CONDES","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":177.9,"intermodal_trips":37.2,"avg_min":26.9,"avg_km":9.49,"avg_stages":1.21},{"year":"2023","origin":"SANTIAGO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":171.8,"intermodal_trips":0.0,"avg_min":13.5,"avg_km":5.09,"avg_stages":1.0},{"year":"2023","origin":"SANTIAGO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":170.9,"intermodal_trips":2.6,"avg_min":12.9,"avg_km":5.0,"avg_stages":1.01},{"year":"2023","origin":"MAIPU","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":165.8,"intermodal_trips":110.9,"avg_min":56.4,"avg_km":15.18,"avg_stages":1.81},{"year":"2023","origin":"PROVIDENCIA","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":160.4,"intermodal_trips":5.0,"avg_min":12.6,"avg_km":4.97,"avg_stages":1.03},{"year":"2023","origin":"SANTIAGO","dest":"ESTACION CENTRAL","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":160.2,"intermodal_trips":6.6,"avg_min":11.8,"avg_km":3.19,"avg_stages":1.04},{"year":"2023","origin":"LAS CONDES","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":158.4,"intermodal_trips":4.0,"avg_min":20.6,"avg_km":9.05,"avg_stages":1.03},{"year":"2023","origin":"PROVIDENCIA","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":157.6,"intermodal_trips":3.7,"avg_min":12.5,"avg_km":4.39,"avg_stages":1.02},{"year":"2023","origin":"ESTACION CENTRAL","dest":"SANTIAGO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":152.9,"intermodal_trips":0.0,"avg_min":10.4,"avg_km":2.84,"avg_stages":1.0},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":151.8,"intermodal_trips":2.7,"avg_min":8.0,"avg_km":2.35,"avg_stages":1.02},{"year":"2023","origin":"SANTIAGO","dest":"NUNOA","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":151.3,"intermodal_trips":5.3,"avg_min":6.3,"avg_km":6.25,"avg_stages":1.04},{"year":"2023","origin":"SANTIAGO","dest":"LAS CONDES","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":148.1,"intermodal_trips":37.9,"avg_min":28.8,"avg_km":9.84,"avg_stages":1.25},{"year":"2023","origin":"ESTACION CENTRAL","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":145.3,"intermodal_trips":0.0,"avg_min":10.5,"avg_km":2.95,"avg_stages":1.0},{"year":"2023","origin":"PROVIDENCIA","dest":"LA FLORIDA","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":144.3,"intermodal_trips":31.4,"avg_min":31.8,"avg_km":14.02,"avg_stages":1.22},{"year":"2023","origin":"SANTIAGO","dest":"PUENTE ALTO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":144.1,"intermodal_trips":35.3,"avg_min":44.1,"avg_km":20.59,"avg_stages":1.25},{"year":"2023","origin":"SANTIAGO","dest":"LO PRADO","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":140.0,"intermodal_trips":0.0,"avg_min":16.5,"avg_km":6.25,"avg_stages":1.0},{"year":"2023","origin":"PROVIDENCIA","dest":"PROVIDENCIA","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":140.0,"intermodal_trips":0.0,"avg_min":7.5,"avg_km":2.06,"avg_stages":1.0},{"year":"2023","origin":"SANTIAGO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":138.4,"intermodal_trips":6.5,"avg_min":12.0,"avg_km":5.27,"avg_stages":1.06},{"year":"2023","origin":"SANTIAGO","dest":"PROVIDENCIA","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":137.2,"intermodal_trips":8.1,"avg_min":15.2,"avg_km":5.06,"avg_stages":1.06},{"year":"2023","origin":"SANTIAGO","dest":"MAIPU","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":133.8,"intermodal_trips":64.8,"avg_min":38.6,"avg_km":15.57,"avg_stages":1.49},{"year":"2023","origin":"LAS CONDES","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":132.7,"intermodal_trips":2.5,"avg_min":21.0,"avg_km":8.79,"avg_stages":1.02},{"year":"2023","origin":"SANTIAGO","dest":"NUNOA","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":130.9,"intermodal_trips":10.4,"avg_min":9.4,"avg_km":6.69,"avg_stages":1.08},{"year":"2023","origin":"PROVIDENCIA","dest":"NUNOA","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":129.2,"intermodal_trips":9.3,"avg_min":8.2,"avg_km":4.91,"avg_stages":1.07},{"year":"2023","origin":"PROVIDENCIA","dest":"ESTACION CENTRAL","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":128.2,"intermodal_trips":11.7,"avg_min":20.0,"avg_km":7.66,"avg_stages":1.1},{"year":"2023","origin":"PROVIDENCIA","dest":"LAS CONDES","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":125.7,"intermodal_trips":23.7,"avg_min":16.6,"avg_km":5.48,"avg_stages":1.19},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":121.7,"intermodal_trips":7.2,"avg_min":15.9,"avg_km":3.17,"avg_stages":1.16},{"year":"2023","origin":"SANTIAGO","dest":"MAIPU","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":119.8,"intermodal_trips":71.0,"avg_min":41.7,"avg_km":16.22,"avg_stages":1.6},{"year":"2023","origin":"SANTIAGO","dest":"LA FLORIDA","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":116.9,"intermodal_trips":32.8,"avg_min":33.9,"avg_km":14.65,"avg_stages":1.28},{"year":"2023","origin":"SANTIAGO","dest":"SAN MIGUEL","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":115.0,"intermodal_trips":0.0,"avg_min":16.3,"avg_km":6.76,"avg_stages":1.0},{"year":"2023","origin":"PROVIDENCIA","dest":"MAIPU","mode":"METRO","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":114.3,"intermodal_trips":61.7,"avg_min":43.2,"avg_km":19.74,"avg_stages":1.54},{"year":"2023","origin":"PUENTE ALTO","dest":"SANTIAGO","mode":"METRO","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":114.3,"intermodal_trips":10.0,"avg_min":40.1,"avg_km":20.23,"avg_stages":1.09},{"year":"2023","origin":"SANTIAGO","dest":"PUENTE ALTO","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":112.6,"intermodal_trips":27.4,"avg_min":46.5,"avg_km":20.55,"avg_stages":1.24},{"year":"2023","origin":"MACUL","dest":"LAS CONDES","mode":"METRO","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":109.3,"intermodal_trips":25.2,"avg_min":38.3,"avg_km":14.84,"avg_stages":1.23},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":108.2,"intermodal_trips":11.4,"avg_min":18.0,"avg_km":3.71,"avg_stages":1.17},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":104.2,"intermodal_trips":4.0,"avg_min":12.8,"avg_km":2.21,"avg_stages":1.09},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"BUS","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":99.9,"intermodal_trips":1.4,"avg_min":19.2,"avg_km":4.17,"avg_stages":1.11},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":98.7,"intermodal_trips":9.4,"avg_min":12.7,"avg_km":2.25,"avg_stages":1.13},{"year":"2023","origin":"MAIPU","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":94.8,"intermodal_trips":56.0,"avg_min":45.9,"avg_km":13.83,"avg_stages":1.7},{"year":"2023","origin":"MAIPU","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":91.8,"intermodal_trips":71.3,"avg_min":53.1,"avg_km":15.7,"avg_stages":1.82},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":90.4,"intermodal_trips":12.7,"avg_min":13.1,"avg_km":2.36,"avg_stages":1.15},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":89.3,"intermodal_trips":12.4,"avg_min":15.5,"avg_km":2.61,"avg_stages":1.17},{"year":"2023","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":87.8,"intermodal_trips":2.9,"avg_min":22.2,"avg_km":5.53,"avg_stages":1.12},{"year":"2023","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":83.6,"intermodal_trips":4.4,"avg_min":18.4,"avg_km":3.87,"avg_stages":1.08},{"year":"2023","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":78.3,"intermodal_trips":5.5,"avg_min":26.3,"avg_km":5.46,"avg_stages":1.2},{"year":"2023","origin":"SANTIAGO","dest":"MAIPU","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":78.3,"intermodal_trips":5.6,"avg_min":54.9,"avg_km":13.39,"avg_stages":1.17},{"year":"2023","origin":"SANTIAGO","dest":"MAIPU","mode":"BUS","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":76.8,"intermodal_trips":2.7,"avg_min":50.6,"avg_km":13.99,"avg_stages":1.16},{"year":"2023","origin":"NUNOA","dest":"NUNOA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":74.9,"intermodal_trips":6.7,"avg_min":9.9,"avg_km":1.87,"avg_stages":1.14},{"year":"2023","origin":"PUENTE ALTO","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":71.1,"intermodal_trips":61.4,"avg_min":60.5,"avg_km":21.71,"avg_stages":1.94},{"year":"2023","origin":"NUNOA","dest":"NUNOA","mode":"BUS","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":70.3,"intermodal_trips":2.8,"avg_min":10.6,"avg_km":2.17,"avg_stages":1.06},{"year":"2023","origin":"PROVIDENCIA","dest":"PROVIDENCIA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":68.8,"intermodal_trips":6.8,"avg_min":11.8,"avg_km":1.79,"avg_stages":1.1},{"year":"2023","origin":"NUNOA","dest":"NUNOA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":67.3,"intermodal_trips":2.6,"avg_min":12.5,"avg_km":2.23,"avg_stages":1.14},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":66.7,"intermodal_trips":9.5,"avg_min":21.7,"avg_km":4.3,"avg_stages":1.2},{"year":"2023","origin":"MAIPU","dest":"PROVIDENCIA","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":65.9,"intermodal_trips":63.1,"avg_min":57.2,"avg_km":21.54,"avg_stages":1.96},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":64.5,"intermodal_trips":4.2,"avg_min":17.1,"avg_km":2.05,"avg_stages":1.11},{"year":"2023","origin":"MAIPU","dest":"PROVIDENCIA","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":63.2,"intermodal_trips":59.0,"avg_min":60.4,"avg_km":20.62,"avg_stages":2.02},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":62.2,"intermodal_trips":15.7,"avg_min":23.8,"avg_km":4.27,"avg_stages":1.44},{"year":"2023","origin":"LAS CONDES","dest":"PROVIDENCIA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":62.1,"intermodal_trips":19.9,"avg_min":23.7,"avg_km":4.84,"avg_stages":1.33},{"year":"2023","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":61.5,"intermodal_trips":5.2,"avg_min":28.2,"avg_km":5.49,"avg_stages":1.16},{"year":"2023","origin":"SAN BERNARDO","dest":"ESTACION CENTRAL","mode":"METROTREN","macro_period":"PUNTA_MANANA","purpose":"OTROS","trips":60.6,"intermodal_trips":1.2,"avg_min":0.7,"avg_km":0.01,"avg_stages":1.02},{"year":"2023","origin":"SANTIAGO","dest":"NUNOA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":59.6,"intermodal_trips":9.3,"avg_min":23.5,"avg_km":5.97,"avg_stages":1.2},{"year":"2023","origin":"LA FLORIDA","dest":"LA FLORIDA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":57.6,"intermodal_trips":1.3,"avg_min":23.6,"avg_km":3.6,"avg_stages":1.02},{"year":"2023","origin":"LA FLORIDA","dest":"LA FLORIDA","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":57.6,"intermodal_trips":4.5,"avg_min":14.3,"avg_km":4.78,"avg_stages":1.1},{"year":"2023","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"BUS","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":57.2,"intermodal_trips":2.2,"avg_min":19.3,"avg_km":5.36,"avg_stages":1.12},{"year":"2023","origin":"PUDAHUEL","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":56.7,"intermodal_trips":44.4,"avg_min":42.0,"avg_km":10.34,"avg_stages":1.81},{"year":"2023","origin":"MAIPU","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":56.5,"intermodal_trips":1.4,"avg_min":20.0,"avg_km":4.27,"avg_stages":1.02},{"year":"2023","origin":"QUILICURA","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":56.3,"intermodal_trips":45.6,"avg_min":30.2,"avg_km":15.67,"avg_stages":1.86},{"year":"2023","origin":"MAIPU","dest":"MAIPU","mode":"BUS","macro_period":"NOCTURNO","purpose":"HOGAR","trips":55.9,"intermodal_trips":2.0,"avg_min":17.1,"avg_km":4.36,"avg_stages":1.09},{"year":"2023","origin":"PUENTE ALTO","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":54.7,"intermodal_trips":46.0,"avg_min":64.6,"avg_km":21.34,"avg_stages":1.91},{"year":"2023","origin":"PUENTE ALTO","dest":"SANTIAGO","mode":"BUS","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":53.8,"intermodal_trips":52.2,"avg_min":58.8,"avg_km":21.36,"avg_stages":2.0},{"year":"2023","origin":"LA FLORIDA","dest":"LA FLORIDA","mode":"BUS","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":53.3,"intermodal_trips":4.9,"avg_min":21.4,"avg_km":3.22,"avg_stages":1.15},{"year":"2023","origin":"MAIPU","dest":"SANTIAGO","mode":"BUS","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":52.5,"intermodal_trips":40.7,"avg_min":50.5,"avg_km":15.79,"avg_stages":1.83},{"year":"2023","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":49.7,"intermodal_trips":0.0,"avg_min":18.4,"avg_km":3.5,"avg_stages":1.0},{"year":"2023","origin":"MAIPU","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":45.0,"intermodal_trips":0.0,"avg_min":19.9,"avg_km":4.62,"avg_stages":1.0},{"year":"2023","origin":"PUENTE ALTO","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":44.8,"intermodal_trips":0.0,"avg_min":21.6,"avg_km":2.86,"avg_stages":1.0},{"year":"2023","origin":"LA FLORIDA","dest":"LA FLORIDA","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":42.9,"intermodal_trips":0.0,"avg_min":20.4,"avg_km":2.93,"avg_stages":1.0},{"year":"2023","origin":"SAN BERNARDO","dest":"SANTIAGO","mode":"METROTREN","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":41.3,"intermodal_trips":41.3,"avg_min":37.2,"avg_km":2.7,"avg_stages":2.0},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":31.1,"intermodal_trips":0.0,"avg_min":14.5,"avg_km":2.49,"avg_stages":1.0},{"year":"2023","origin":"ESTACION CENTRAL","dest":"SAN BERNARDO","mode":"METROTREN","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":29.5,"intermodal_trips":2.0,"avg_min":2.2,"avg_km":0.12,"avg_stages":1.06},{"year":"2023","origin":"PUDAHUEL","dest":"PUDAHUEL","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":29.4,"intermodal_trips":0.0,"avg_min":8.9,"avg_km":2.31,"avg_stages":1.0},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":28.1,"intermodal_trips":1.4,"avg_min":22.2,"avg_km":4.08,"avg_stages":1.05},{"year":"2023","origin":"NUNOA","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":26.0,"intermodal_trips":18.3,"avg_min":53.1,"avg_km":20.58,"avg_stages":1.9},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":25.9,"intermodal_trips":0.0,"avg_min":18.3,"avg_km":3.96,"avg_stages":1.0},{"year":"2023","origin":"SAN BERNARDO","dest":"SANTIAGO","mode":"METROTREN","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":25.6,"intermodal_trips":25.6,"avg_min":38.5,"avg_km":2.37,"avg_stages":2.0},{"year":"2023","origin":"SANTIAGO","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":25.1,"intermodal_trips":1.4,"avg_min":11.7,"avg_km":2.25,"avg_stages":1.05},{"year":"2023","origin":"NUNOA","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":23.6,"intermodal_trips":15.8,"avg_min":32.3,"avg_km":7.23,"avg_stages":1.67},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":23.2,"intermodal_trips":0.0,"avg_min":28.8,"avg_km":2.74,"avg_stages":1.0},{"year":"2023","origin":"NUNOA","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":22.4,"intermodal_trips":17.1,"avg_min":48.4,"avg_km":16.96,"avg_stages":2.18},{"year":"2023","origin":"PUDAHUEL","dest":"PUDAHUEL","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":20.1,"intermodal_trips":0.0,"avg_min":10.6,"avg_km":1.79,"avg_stages":1.0},{"year":"2023","origin":"LA CISTERNA","dest":"LA CISTERNA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":20.0,"intermodal_trips":0.0,"avg_min":5.9,"avg_km":0.72,"avg_stages":1.0},{"year":"2023","origin":"NUNOA","dest":"NUNOA","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":19.2,"intermodal_trips":0.0,"avg_min":10.4,"avg_km":2.86,"avg_stages":1.0},{"year":"2023","origin":"PROVIDENCIA","dest":"NUNOA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":19.2,"intermodal_trips":1.5,"avg_min":28.0,"avg_km":4.16,"avg_stages":1.08},{"year":"2023","origin":"SAN BERNARDO","dest":"PROVIDENCIA","mode":"METROTREN","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":18.9,"intermodal_trips":18.9,"avg_min":32.7,"avg_km":9.04,"avg_stages":2.0},{"year":"2023","origin":"NUNOA","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":18.8,"intermodal_trips":3.7,"avg_min":27.5,"avg_km":6.12,"avg_stages":1.27},{"year":"2023","origin":"LO PRADO","dest":"MAIPU","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":18.2,"intermodal_trips":0.0,"avg_min":24.2,"avg_km":5.44,"avg_stages":1.0},{"year":"2023","origin":"SAN BERNARDO","dest":"ESTACION CENTRAL","mode":"METROTREN","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":18.0,"intermodal_trips":0.0,"avg_min":0.0,"avg_km":0.0,"avg_stages":1.0},{"year":"2023","origin":"NUNOA","dest":"NUNOA","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":17.3,"intermodal_trips":0.0,"avg_min":8.4,"avg_km":2.03,"avg_stages":1.0},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":16.4,"intermodal_trips":0.0,"avg_min":20.9,"avg_km":3.28,"avg_stages":1.0},{"year":"2023","origin":"SAN BERNARDO","dest":"PROVIDENCIA","mode":"METROTREN","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":15.9,"intermodal_trips":15.9,"avg_min":39.4,"avg_km":8.07,"avg_stages":2.0},{"year":"2023","origin":"NUNOA","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":15.8,"intermodal_trips":5.2,"avg_min":25.2,"avg_km":5.51,"avg_stages":1.42},{"year":"2023","origin":"LA CISTERNA","dest":"SAN BERNARDO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":15.4,"intermodal_trips":0.0,"avg_min":31.3,"avg_km":6.9,"avg_stages":1.0},{"year":"2023","origin":"LA CISTERNA","dest":"EL BOSQUE","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":15.3,"intermodal_trips":0.0,"avg_min":21.9,"avg_km":4.28,"avg_stages":1.0},{"year":"2023","origin":"SANTIAGO","dest":"RENCA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":15.2,"intermodal_trips":0.0,"avg_min":35.0,"avg_km":8.85,"avg_stages":1.09},{"year":"2023","origin":"ESTACION CENTRAL","dest":"SAN BERNARDO","mode":"METROTREN","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":14.1,"intermodal_trips":3.1,"avg_min":10.8,"avg_km":0.54,"avg_stages":1.22},{"year":"2023","origin":"NUNOA","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":14.0,"intermodal_trips":14.0,"avg_min":34.3,"avg_km":15.69,"avg_stages":2.2},{"year":"2023","origin":"SAN BERNARDO","dest":"PROVIDENCIA","mode":"METROTREN","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":13.9,"intermodal_trips":13.9,"avg_min":32.3,"avg_km":8.28,"avg_stages":2.0},{"year":"2023","origin":"NUNOA","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":13.7,"intermodal_trips":1.3,"avg_min":26.9,"avg_km":6.63,"avg_stages":1.09},{"year":"2023","origin":"NUNOA","dest":"NUNOA","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":13.5,"intermodal_trips":2.7,"avg_min":12.2,"avg_km":2.35,"avg_stages":1.2},{"year":"2023","origin":"SAN BERNARDO","dest":"PROVIDENCIA","mode":"METROTREN","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":13.4,"intermodal_trips":13.4,"avg_min":32.4,"avg_km":7.91,"avg_stages":2.0},{"year":"2023","origin":"LA CISTERNA","dest":"EL BOSQUE","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":13.1,"intermodal_trips":0.0,"avg_min":17.2,"avg_km":3.39,"avg_stages":1.0},{"year":"2023","origin":"NUNOA","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"OTROS","trips":12.9,"intermodal_trips":7.8,"avg_min":23.7,"avg_km":4.71,"avg_stages":1.6},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"OTROS","trips":12.8,"intermodal_trips":0.0,"avg_min":16.2,"avg_km":3.31,"avg_stages":1.0},{"year":"2023","origin":"NUNOA","dest":"PUENTE ALTO","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":12.7,"intermodal_trips":11.3,"avg_min":47.1,"avg_km":15.71,"avg_stages":2.11},{"year":"2023","origin":"NUNOA","dest":"PENALOLEN","mode":"ZONA PAGA","macro_period":"PUNTA_TARDE","purpose":"HOGAR","trips":12.6,"intermodal_trips":1.4,"avg_min":17.1,"avg_km":4.96,"avg_stages":1.11},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":12.4,"intermodal_trips":0.0,"avg_min":15.2,"avg_km":2.84,"avg_stages":1.0},{"year":"2023","origin":"SAN BERNARDO","dest":"SANTIAGO","mode":"METROTREN","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":12.3,"intermodal_trips":12.3,"avg_min":42.2,"avg_km":2.55,"avg_stages":2.0},{"year":"2023","origin":"LAS CONDES","dest":"SANTIAGO","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"HOGAR","trips":12.1,"intermodal_trips":4.4,"avg_min":86.0,"avg_km":14.08,"avg_stages":1.44},{"year":"2023","origin":"NUNOA","dest":"NUNOA","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":11.2,"intermodal_trips":0.0,"avg_min":6.4,"avg_km":1.9,"avg_stages":1.0},{"year":"2023","origin":"SANTIAGO","dest":"INDEPENDENCIA","mode":"ZONA PAGA","macro_period":"PUNTA_MANANA","purpose":"ESTUDIO","trips":11.2,"intermodal_trips":0.0,"avg_min":13.1,"avg_km":2.6,"avg_stages":1.0},{"year":"2023","origin":"SAN BERNARDO","dest":"LAS CONDES","mode":"METROTREN","macro_period":"PUNTA_MANANA","purpose":"TRABAJO","trips":11.1,"intermodal_trips":11.1,"avg_min":55.9,"avg_km":10.62,"avg_stages":2.0},{"year":"2023","origin":"LAS CONDES","dest":"LAS CONDES","mode":"ZONA PAGA","macro_period":"FUERA_PUNTA","purpose":"TRABAJO","trips":11.1,"intermodal_trips":0.0,"avg_min":9.3,"avg_km":3.9,"avg_stages":1.0},{"year":"2023","origin":"SAN BERNARDO","dest":"PEDRO AGUIRRE CERDA","mode":"METROTREN","macro_period":"PUNTA_MANANA","purpose":"OTROS","trips":11.0,"intermodal_trips":0.0,"avg_min":0.0,"avg_km":0.0,"avg_stages":1.0},{"year":"2023","origin":"SAN BERNARDO","dest":"ESTACION CENTRAL","mode":"METROTREN","macro_period":"FUERA_PUNTA","purpose":"ESTUDIO","trips":10.7,"intermodal_trips":6.6,"avg_min":19.0,"avg_km":1.4,"avg_stages":1.63}],"metro_2023_profiles":[{"station":"LOS LEONES","comuna":"PROVIDENCIA","total_daily":100941.2,"half_hours":{"5:30:00":38.0,"6:00:00":178.0,"6:30:00":431.6,"7:00:00":1089.6,"7:30:00":1712.8,"8:00:00":1847.2,"8:30:00":1670.0,"9:00:00":1409.2,"9:30:00":1433.2,"10:00:00":1366.0,"10:30:00":1735.2,"11:00:00":2043.6,"11:30:00":1997.2,"12:00:00":2513.6,"12:30:00":2751.2,"13:00:00":3028.8,"13:30:00":3197.2,"14:00:00":3325.2,"14:30:00":3272.4,"15:00:00":3152.0,"15:30:00":3177.2,"16:00:00":4082.0,"16:30:00":4094.8,"17:00:00":5540.0,"17:30:00":6749.2,"18:00:00":8756.0,"18:30:00":7962.8,"19:00:00":7090.4,"19:30:00":4401.2,"20:00:00":3443.2,"20:30:00":2239.6,"21:00:00":1793.2,"21:30:00":1413.2,"22:00:00":1242.8,"22:30:00":722.0,"23:00:00":41.6}},{"station":"LA CISTERNA","comuna":"LA CISTERNA","total_daily":95767.6,"half_hours":{"5:30:00":45.6,"6:00:00":5431.2,"6:30:00":7233.6,"7:00:00":9750.0,"7:30:00":8674.4,"8:00:00":7664.4,"8:30:00":5653.6,"9:00:00":4331.6,"9:30:00":3441.2,"10:00:00":2983.2,"10:30:00":3018.8,"11:00:00":2412.8,"11:30:00":2070.8,"12:00:00":1864.4,"12:30:00":1915.2,"13:00:00":2128.0,"13:30:00":1902.0,"14:00:00":1767.2,"14:30:00":1586.4,"15:00:00":1479.2,"15:30:00":1428.0,"16:00:00":1531.6,"16:30:00":1906.0,"17:00:00":1952.8,"17:30:00":2443.2,"18:00:00":2732.0,"18:30:00":2373.6,"19:00:00":1810.0,"19:30:00":1221.6,"20:00:00":902.4,"20:30:00":786.0,"21:00:00":554.4,"21:30:00":341.2,"22:00:00":261.6,"22:30:00":163.2,"23:00:00":6.4}},{"station":"TOBALABA","comuna":"PROVIDENCIA","total_daily":89496.0,"half_hours":{"5:30:00":38.4,"6:00:00":240.8,"6:30:00":386.0,"7:00:00":1056.0,"7:30:00":1514.0,"8:00:00":1724.8,"8:30:00":1452.0,"9:00:00":1384.4,"9:30:00":1280.0,"10:00:00":1108.8,"10:30:00":1361.6,"11:00:00":1451.2,"11:30:00":1686.4,"12:00:00":1912.4,"12:30:00":2089.2,"13:00:00":2366.4,"13:30:00":2319.2,"14:00:00":2506.0,"14:30:00":2632.4,"15:00:00":2784.0,"15:30:00":2688.0,"16:00:00":3119.6,"16:30:00":3662.0,"17:00:00":5039.2,"17:30:00":6030.0,"18:00:00":7354.4,"18:30:00":7024.8,"19:00:00":5903.2,"19:30:00":4134.0,"20:00:00":3993.2,"20:30:00":3290.0,"21:00:00":1980.8,"21:30:00":1550.0,"22:00:00":1512.0,"22:30:00":876.8,"23:00:00":44.0}},{"station":"UNIVERSIDAD DE CHILE","comuna":"SANTIAGO","total_daily":86756.0,"half_hours":{"5:30:00":67.6,"6:00:00":314.8,"6:30:00":512.4,"7:00:00":867.2,"7:30:00":1181.2,"8:00:00":1468.0,"8:30:00":1315.6,"9:00:00":1347.2,"9:30:00":1762.0,"10:00:00":1853.2,"10:30:00":2234.8,"11:00:00":2426.0,"11:30:00":2765.2,"12:00:00":3130.0,"12:30:00":3494.4,"13:00:00":3906.4,"13:30:00":3816.8,"14:00:00":3484.8,"14:30:00":3068.8,"15:00:00":3066.0,"15:30:00":2914.8,"16:00:00":3269.2,"16:30:00":3687.6,"17:00:00":5192.0,"17:30:00":5783.2,"18:00:00":6366.8,"18:30:00":5107.6,"19:00:00":4086.8,"19:30:00":2620.0,"20:00:00":2126.8,"20:30:00":1090.8,"21:00:00":940.8,"21:30:00":632.4,"22:00:00":604.0,"22:30:00":231.2,"23:00:00":19.6}},{"station":"LOS HEROES","comuna":"SANTIAGO","total_daily":76570.8,"half_hours":{"5:30:00":142.0,"6:00:00":602.4,"6:30:00":820.8,"7:00:00":1409.2,"7:30:00":1701.6,"8:00:00":1910.8,"8:30:00":1380.0,"9:00:00":1283.6,"9:30:00":1496.8,"10:00:00":1524.8,"10:30:00":1500.8,"11:00:00":1826.4,"11:30:00":1990.0,"12:00:00":2246.8,"12:30:00":3006.0,"13:00:00":3170.8,"13:30:00":2362.0,"14:00:00":2472.8,"14:30:00":2315.2,"15:00:00":2555.2,"15:30:00":3147.6,"16:00:00":3116.8,"16:30:00":3170.8,"17:00:00":4408.8,"17:30:00":4522.4,"18:00:00":4378.8,"18:30:00":3716.8,"19:00:00":2653.2,"19:30:00":1550.0,"20:00:00":1828.0,"20:30:00":1802.4,"21:00:00":1838.8,"21:30:00":2084.8,"22:00:00":1839.2,"22:30:00":769.6,"23:00:00":24.8}},{"station":"PLAZA DE ARMAS","comuna":"SANTIAGO","total_daily":73386.0,"half_hours":{"5:30:00":54.0,"6:00:00":179.6,"6:30:00":307.6,"7:00:00":591.2,"7:30:00":715.6,"8:00:00":620.4,"8:30:00":592.8,"9:00:00":727.6,"9:30:00":954.0,"10:00:00":1146.0,"10:30:00":1408.0,"11:00:00":1734.0,"11:30:00":1961.6,"12:00:00":2273.2,"12:30:00":2512.0,"13:00:00":2789.2,"13:30:00":2791.2,"14:00:00":2844.0,"14:30:00":2542.8,"15:00:00":2550.0,"15:30:00":2493.6,"16:00:00":2960.0,"16:30:00":3375.6,"17:00:00":4472.0,"17:30:00":5510.8,"18:00:00":6459.2,"18:30:00":5366.8,"19:00:00":4848.0,"19:30:00":2976.0,"20:00:00":2491.6,"20:30:00":1176.4,"21:00:00":878.8,"21:30:00":549.2,"22:00:00":396.0,"22:30:00":136.4,"23:00:00":0.8}},{"station":"ESTACION CENTRAL","comuna":"ESTACION CENTRAL","total_daily":72460.8,"half_hours":{"5:30:00":97.8,"6:00:00":926.4,"6:30:00":2880.0,"7:00:00":3794.4,"7:30:00":5280.4,"8:00:00":4853.8,"8:30:00":4656.4,"9:00:00":3377.0,"9:30:00":2972.4,"10:00:00":2432.2,"10:30:00":2170.4,"11:00:00":2124.4,"11:30:00":2059.2,"12:00:00":1855.4,"12:30:00":2124.8,"13:00:00":2161.2,"13:30:00":2250.2,"14:00:00":2072.6,"14:30:00":1713.0,"15:00:00":1757.2,"15:30:00":1570.4,"16:00:00":1661.2,"16:30:00":1547.4,"17:00:00":1923.0,"17:30:00":1992.2,"18:00:00":2729.6,"18:30:00":2758.6,"19:00:00":1890.0,"19:30:00":1440.6,"20:00:00":1138.4,"20:30:00":742.4,"21:00:00":662.8,"21:30:00":432.2,"22:00:00":262.0,"22:30:00":126.8,"23:00:00":23.8,"23:30:00":0.2}},{"station":"MANQUEHUE","comuna":"LAS CONDES","total_daily":71042.0,"half_hours":{"5:30:00":63.0,"6:00:00":160.2,"6:30:00":352.0,"7:00:00":1221.4,"7:30:00":1958.4,"8:00:00":2061.8,"8:30:00":1908.8,"9:00:00":1472.6,"9:30:00":1126.6,"10:00:00":973.4,"10:30:00":1059.8,"11:00:00":1054.6,"11:30:00":1083.6,"12:00:00":1217.4,"12:30:00":1334.0,"13:00:00":1475.8,"13:30:00":1512.8,"14:00:00":1645.0,"14:30:00":1725.4,"15:00:00":1824.8,"15:30:00":2023.6,"16:00:00":2517.8,"16:30:00":2982.8,"17:00:00":4121.8,"17:30:00":5296.6,"18:00:00":6811.8,"18:30:00":6564.2,"19:00:00":5022.8,"19:30:00":2929.2,"20:00:00":2632.4,"20:30:00":1792.8,"21:00:00":1115.2,"21:30:00":800.0,"22:00:00":811.4,"22:30:00":371.0,"23:00:00":17.2}},{"station":"LA CISTERNA","comuna":"LA CISTERNA","total_daily":62064.4,"half_hours":{"5:30:00":411.6,"6:00:00":2120.4,"6:30:00":3683.6,"7:00:00":5166.8,"7:30:00":5248.0,"8:00:00":4996.4,"8:30:00":3280.8,"9:00:00":2608.0,"9:30:00":1917.2,"10:00:00":1611.2,"10:30:00":1480.8,"11:00:00":1336.4,"11:30:00":1128.4,"12:00:00":1146.8,"12:30:00":1106.8,"13:00:00":1250.4,"13:30:00":1208.0,"14:00:00":1290.8,"14:30:00":1058.8,"15:00:00":1046.0,"15:30:00":1208.4,"16:00:00":1345.2,"16:30:00":1523.6,"17:00:00":1737.6,"17:30:00":2227.2,"18:00:00":2576.8,"18:30:00":2284.8,"19:00:00":1793.6,"19:30:00":1190.8,"20:00:00":958.0,"20:30:00":734.8,"21:00:00":598.0,"21:30:00":334.0,"22:00:00":283.2,"22:30:00":155.2,"23:00:00":16.0}},{"station":"CAL Y CANTO","comuna":"SANTIAGO","total_daily":60790.4,"half_hours":{"5:30:00":227.2,"6:00:00":1164.0,"6:30:00":1806.8,"7:00:00":3019.2,"7:30:00":3086.0,"8:00:00":2709.2,"8:30:00":1987.6,"9:00:00":1495.6,"9:30:00":1388.4,"10:00:00":1173.2,"10:30:00":1167.6,"11:00:00":1295.6,"11:30:00":1326.4,"12:00:00":1502.0,"12:30:00":1696.0,"13:00:00":1804.8,"13:30:00":1737.6,"14:00:00":1703.6,"14:30:00":1622.8,"15:00:00":1682.8,"15:30:00":1668.4,"16:00:00":1722.8,"16:30:00":1923.2,"17:00:00":2538.4,"17:30:00":3263.2,"18:00:00":3872.0,"18:30:00":3706.4,"19:00:00":2711.6,"19:30:00":1779.2,"20:00:00":1505.6,"20:30:00":940.0,"21:00:00":700.0,"21:30:00":440.4,"22:00:00":287.6,"22:30:00":132.4,"23:00:00":2.8}},{"station":"SANTA ANA","comuna":"SANTIAGO","total_daily":58059.6,"half_hours":{"5:30:00":131.2,"6:00:00":948.8,"6:30:00":1605.2,"7:00:00":2690.8,"7:30:00":3242.4,"8:00:00":2842.4,"8:30:00":2067.2,"9:00:00":1707.2,"9:30:00":1510.8,"10:00:00":1148.4,"10:30:00":1052.4,"11:00:00":1028.8,"11:30:00":1101.2,"12:00:00":1050.8,"12:30:00":1140.8,"13:00:00":1312.8,"13:30:00":1492.8,"14:00:00":1443.6,"14:30:00":1265.2,"15:00:00":1282.0,"15:30:00":1257.2,"16:00:00":1555.6,"16:30:00":1772.4,"17:00:00":2504.4,"17:30:00":3180.8,"18:00:00":4666.8,"18:30:00":3830.8,"19:00:00":2645.6,"19:30:00":1614.0,"20:00:00":1380.8,"20:30:00":1064.0,"21:00:00":1000.0,"21:30:00":672.8,"22:00:00":544.0,"22:30:00":297.6,"23:00:00":8.0}},{"station":"TOBALABA","comuna":"PROVIDENCIA","total_daily":53261.6,"half_hours":{"5:30:00":38.8,"6:00:00":110.8,"6:30:00":255.6,"7:00:00":600.0,"7:30:00":530.4,"8:00:00":518.4,"8:30:00":416.0,"9:00:00":431.2,"9:30:00":431.2,"10:00:00":447.6,"10:30:00":509.2,"11:00:00":608.8,"11:30:00":670.4,"12:00:00":798.8,"12:30:00":884.8,"13:00:00":1123.2,"13:30:00":1118.4,"14:00:00":1338.8,"14:30:00":1339.2,"15:00:00":1495.6,"15:30:00":1488.8,"16:00:00":2013.2,"16:30:00":2266.0,"17:00:00":3450.0,"17:30:00":4313.6,"18:00:00":6004.8,"18:30:00":5600.0,"19:00:00":4352.4,"19:30:00":2635.2,"20:00:00":2197.6,"20:30:00":1787.2,"21:00:00":1099.6,"21:30:00":932.0,"22:00:00":998.0,"22:30:00":439.6,"23:00:00":16.4}},{"station":"PEDRO DE VALDIVIA","comuna":"PROVIDENCIA","total_daily":45907.8,"half_hours":{"5:30:00":22.6,"6:00:00":164.2,"6:30:00":369.0,"7:00:00":774.2,"7:30:00":1061.4,"8:00:00":1120.8,"8:30:00":1036.8,"9:00:00":957.6,"9:30:00":983.8,"10:00:00":929.8,"10:30:00":1076.2,"11:00:00":1201.6,"11:30:00":1168.2,"12:00:00":1376.2,"12:30:00":1564.2,"13:00:00":1476.0,"13:30:00":1352.0,"14:00:00":1358.8,"14:30:00":1261.0,"15:00:00":1410.2,"15:30:00":1528.6,"16:00:00":1868.6,"16:30:00":1883.4,"17:00:00":2585.6,"17:30:00":2923.4,"18:00:00":3655.0,"18:30:00":3111.0,"19:00:00":2233.4,"19:30:00":1409.8,"20:00:00":1243.4,"20:30:00":865.0,"21:00:00":680.2,"21:30:00":515.2,"22:00:00":519.4,"22:30:00":208.4,"23:00:00":12.8}},{"station":"LAS REJAS","comuna":"LO PRADO","total_daily":45736.0,"half_hours":{"5:30:00":180.2,"6:00:00":1773.0,"6:30:00":2600.8,"7:00:00":3812.6,"7:30:00":4830.0,"8:00:00":4318.4,"8:30:00":3694.8,"9:00:00":2661.4,"9:30:00":1953.6,"10:00:00":1546.2,"10:30:00":1327.0,"11:00:00":1131.8,"11:30:00":1083.6,"12:00:00":914.4,"12:30:00":928.2,"13:00:00":972.6,"13:30:00":897.2,"14:00:00":805.8,"14:30:00":680.4,"15:00:00":704.0,"15:30:00":707.8,"16:00:00":640.0,"16:30:00":663.6,"17:00:00":794.4,"17:30:00":1031.2,"18:00:00":1246.4,"18:30:00":1244.6,"19:00:00":867.4,"19:30:00":521.2,"20:00:00":380.2,"20:30:00":307.8,"21:00:00":215.0,"21:30:00":130.8,"22:00:00":113.4,"22:30:00":51.6,"23:00:00":4.6}},{"station":"PLAZA MAIPU","comuna":"MAIPU","total_daily":44668.0,"half_hours":{"5:30:00":255.4,"6:00:00":1948.0,"6:30:00":3256.6,"7:00:00":3967.8,"7:30:00":4586.2,"8:00:00":3945.6,"8:30:00":2887.4,"9:00:00":2078.4,"9:30:00":1474.4,"10:00:00":1226.6,"10:30:00":1058.8,"11:00:00":1014.8,"11:30:00":966.0,"12:00:00":955.6,"12:30:00":1015.8,"13:00:00":1058.2,"13:30:00":924.4,"14:00:00":901.4,"14:30:00":767.8,"15:00:00":723.0,"15:30:00":715.6,"16:00:00":806.8,"16:30:00":883.0,"17:00:00":994.2,"17:30:00":1298.6,"18:00:00":1118.8,"18:30:00":977.0,"19:00:00":735.8,"19:30:00":414.6,"20:00:00":408.0,"20:30:00":385.6,"21:00:00":274.4,"21:30:00":239.6,"22:00:00":263.4,"22:30:00":140.2,"23:00:00":0.2}}]};
+
+const MODE_COLORS = {
+  "METRO": "#ef4444",
+  "BUS": "#10b981",
+  "ZONA PAGA": "#f59e0b",
+  "METROTREN": "#a855f7",
+  "ALL": "#38bdf8"
+};
+
+let state = {
+  year: "2023",
+  mode: "ALL",
+  period: "ALL",
+  purpose: "ALL",
+  commune: "ALL",
+  direction: "BOTH",
+  topN: 35,
+  showArcs: true,
+  showHubs: true,
+  showCommunes: true,
+  useGoogleMaps: false,
+  gmapKey: localStorage.getItem("METRO_OD_GMAP_KEY") || ""
+};
+
+// Populate Commune Dropdown
+const selCommune = document.getElementById("sel-commune");
+Object.keys(DATA.communes).sort().forEach(c => {
+  const opt = document.createElement("option");
+  opt.value = c;
+  opt.textContent = c;
+  selCommune.appendChild(opt);
+});
+
+// Populate 2023 Station Profile Dropdown
+const selStation = document.getElementById("sel-station-profile");
+DATA.metro_2023_profiles.forEach((st, idx) => {
+  const opt = document.createElement("option");
+  opt.value = idx;
+  opt.textContent = `${st.station} (${st.comuna}) — ${st.total_daily.toLocaleString()} sub/día`;
+  selStation.appendChild(opt);
+});
+
+// Initialize Leaflet Map
+const leafletMap = L.map("leaflet-map", {
+  center: [-33.455, -70.655],
+  zoom: 11,
+  preferCanvas: true
+});
+
+const darkTiles = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: "&copy; OpenStreetMap &copy; CARTO",
+  subdomains: "abcd",
+  maxZoom: 19
+}).addTo(leafletMap);
+
+const voyagerTiles = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+  attribution: "&copy; OpenStreetMap &copy; CARTO"
+});
+
+const satelliteTiles = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+  attribution: "Tiles &copy; Esri"
+});
+
+L.control.layers({
+  "Oscuro (Carto Dark)": darkTiles,
+  "Claro (Carto Voyager)": voyagerTiles,
+  "Satélite (Esri)": satelliteTiles
+}, null, { position: "topright" }).addTo(leafletMap);
+
+const arcsLayer = L.layerGroup().addTo(leafletMap);
+const hubsLayer = L.layerGroup().addTo(leafletMap);
+const communesLayer = L.layerGroup().addTo(leafletMap);
+
+// Google Maps instance & overlays
+let gmap = null;
+let gmapOverlays = [];
+
+function clearGmapOverlays() {
+  gmapOverlays.forEach(o => o.setMap(null));
+  gmapOverlays = [];
+}
+
+function getCurvedPoints(lat1, lon1, lat2, lon2, segments = 24) {
+  const pts = [];
+  const dx = lon2 - lon1;
+  const dy = lat2 - lat1;
+  const offset = 0.16;
+  const midLat = (lat1 + lat2) / 2 - dx * offset;
+  const midLon = (lon1 + lon2) / 2 + dy * offset;
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const lat = (1 - t) * (1 - t) * lat1 + 2 * (1 - t) * t * midLat + t * t * lat2;
+    const lon = (1 - t) * (1 - t) * lon1 + 2 * (1 - t) * t * midLon + t * t * lon2;
+    pts.push([lat, lon]);
+  }
+  return pts;
+}
+
+function filterFlowsForYear(yr) {
+  return DATA.od_flows.filter(f => {
+    if (f.year !== yr) return false;
+    if (state.mode !== "ALL" && f.mode !== state.mode) return false;
+    if (state.period !== "ALL" && f.macro_period !== state.period) return false;
+    if (state.purpose !== "ALL" && f.purpose !== state.purpose) return false;
+    if (state.commune !== "ALL") {
+      if (state.direction === "ORIGIN" && f.origin !== state.commune) return false;
+      if (state.direction === "DEST" && f.dest !== state.commune) return false;
+      if (state.direction === "BOTH" && f.origin !== state.commune && f.dest !== state.commune) return false;
+    }
+    return true;
+  });
+}
+
+function aggregateCorridors(rawFlows) {
+  const map = new Map();
+  for (const f of rawFlows) {
+    const key = `${f.origin}|${f.dest}|${f.mode}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        origin: f.origin,
+        dest: f.dest,
+        mode: f.mode,
+        trips: 0,
+        intermodal_trips: 0,
+        weighted_min: 0,
+        weighted_km: 0,
+        weighted_stages: 0
+      });
+    }
+    const rec = map.get(key);
+    rec.trips += f.trips;
+    rec.intermodal_trips += f.intermodal_trips;
+    rec.weighted_min += f.trips * (f.avg_min || 0);
+    rec.weighted_km += f.trips * (f.avg_km || 0);
+    rec.weighted_stages += f.trips * (f.avg_stages || 1);
+  }
+  const arr = Array.from(map.values()).map(r => ({
+    ...r,
+    avg_min: r.trips > 0 ? r.weighted_min / r.trips : 0,
+    avg_km: r.trips > 0 ? r.weighted_km / r.trips : 0,
+    avg_stages: r.trips > 0 ? r.weighted_stages / r.trips : 1,
+    intermodal_pct: r.trips > 0 ? (r.intermodal_trips / r.trips) * 100 : 0
+  }));
+  arr.sort((a, b) => b.trips - a.trips);
+  return arr;
+}
+
+function summarizeTotals(corridors) {
+  let trips = 0, inter = 0, wMin = 0, wKm = 0, wStg = 0;
+  const modeTotals = {};
+  for (const c of corridors) {
+    trips += c.trips;
+    inter += c.intermodal_trips;
+    wMin += c.trips * c.avg_min;
+    wKm += c.trips * c.avg_km;
+    wStg += c.trips * c.avg_stages;
+    modeTotals[c.mode] = (modeTotals[c.mode] || 0) + c.trips;
+  }
+  let domMode = "—", domVal = 0;
+  for (const [m, v] of Object.entries(modeTotals)) {
+    if (v > domVal) { domVal = v; domMode = m; }
+  }
+  return {
+    trips,
+    intermodalPct: trips > 0 ? (inter / trips) * 100 : 0,
+    avgMin: trips > 0 ? wMin / trips : 0,
+    avgKm: trips > 0 ? wKm / trips : 0,
+    avgStages: trips > 0 ? wStg / trips : 0,
+    domMode,
+    domPct: trips > 0 ? (domVal / trips) * 100 : 0,
+    modeTotals
+  };
+}
+
+function renderDashboard() {
+  const currFlows = filterFlowsForYear(state.year);
+  const otherYear = state.year === "2023" ? "2019" : "2023";
+  const prevFlows = filterFlowsForYear(otherYear);
+
+  const corridors = aggregateCorridors(currFlows);
+  const prevCorridors = aggregateCorridors(prevFlows);
+
+  const currSum = summarizeTotals(corridors);
+  const prevSum = summarizeTotals(prevCorridors);
+
+  // 1. Update KPIs
+  document.getElementById("kpi-trips").textContent = Math.round(currSum.trips).toLocaleString();
+  const tripDelta = prevSum.trips > 0 ? ((currSum.trips - prevSum.trips) / prevSum.trips) * 100 : 0;
+  document.getElementById("kpi-trips-vs").innerHTML = `vs ${otherYear}: <span class="badge-delta ${tripDelta >= 0 ? 'delta-pos' : 'delta-neg'}">${tripDelta >= 0 ? '+' : ''}${tripDelta.toFixed(1)}%</span>`;
+  document.getElementById("kpi-intermodal").textContent = `Intermodal: ${currSum.intermodalPct.toFixed(1)}%`;
+
+  document.getElementById("kpi-time").textContent = `${currSum.avgMin.toFixed(1)} min`;
+  document.getElementById("kpi-time-vs").textContent = `${otherYear}: ${prevSum.avgMin.toFixed(1)} min`;
+  document.getElementById("kpi-stages").textContent = `Etapas prom: ${currSum.avgStages.toFixed(2)}`;
+
+  document.getElementById("kpi-dist").textContent = `${currSum.avgKm.toFixed(2)} km`;
+  document.getElementById("kpi-dist-vs").textContent = `${otherYear}: ${prevSum.avgKm.toFixed(2)} km`;
+  const speedKmh = currSum.avgMin > 0 ? (currSum.avgKm / (currSum.avgMin / 60)) : 0;
+  document.getElementById("kpi-speed").textContent = `Velocidad est: ${speedKmh.toFixed(1)} km/h`;
+
+  const topC = corridors[0];
+  document.getElementById("kpi-top-od").textContent = topC ? `${topC.origin} → ${topC.dest}` : "Sin datos en filtro";
+  document.getElementById("kpi-dom-mode").textContent = `Modo líder: ${currSum.domMode} (${currSum.domPct.toFixed(0)}%)`;
+
+  const filteredHubs = DATA.stop_hubs.filter(h =>
+    h.year === state.year &&
+    (state.mode === "ALL" || h.mode === state.mode) &&
+    (state.commune === "ALL" || h.comuna === state.commune)
+  );
+  filteredHubs.sort((a, b) => b.total - a.total);
+  document.getElementById("kpi-hub-top").textContent = filteredHubs[0] ? `Top: ${filteredHubs[0].name}` : "—";
+
+  // 2. Render Map Layers (Leaflet & optional Google Maps)
+  arcsLayer.clearLayers();
+  hubsLayer.clearLayers();
+  communesLayer.clearLayers();
+  if (state.useGoogleMaps && gmap) clearGmapOverlays();
+
+  const topCorridors = corridors.slice(0, state.topN);
+  const maxTrips = topCorridors.length > 0 ? topCorridors[0].trips : 1;
+
+  if (state.showArcs) {
+    topCorridors.forEach(c => {
+      const orig = DATA.communes[c.origin];
+      const dest = DATA.communes[c.dest];
+      if (!orig || !dest || c.origin === c.dest) return;
+      const color = MODE_COLORS[c.mode] || "#38bdf8";
+      const weight = Math.max(1.8, Math.min(9, 1.5 + (c.trips / maxTrips) * 7.5));
+      const pts = getCurvedPoints(orig.lat, orig.lon, dest.lat, dest.lon);
+
+      const poly = L.polyline(pts, {
+        color,
+        weight,
+        opacity: 0.72
+      }).bindTooltip(
+        `<b>${c.origin} → ${c.dest}</b> (${c.mode})<br/>` +
+        `Viajes: <b>${Math.round(c.trips).toLocaleString()}</b> | Intermodal: ${c.intermodal_pct.toFixed(1)}%<br/>` +
+        `Tiempo prom: ${c.avg_min.toFixed(1)} min | Ruta: ${c.avg_km.toFixed(1)} km`,
+        { sticky: true }
+      );
+      poly.on("click", () => {
+        state.commune = c.origin;
+        selCommune.value = c.origin;
+        renderDashboard();
+      });
+      arcsLayer.addLayer(poly);
+
+      if (state.useGoogleMaps && gmap && window.google) {
+        const gPoly = new google.maps.Polyline({
+          path: pts.map(p => ({ lat: p[0], lng: p[1] })),
+          geodesic: false,
+          strokeColor: color,
+          strokeOpacity: 0.78,
+          strokeWeight: weight,
+          map: gmap
+        });
+        gmapOverlays.push(gPoly);
+      }
+    });
+  }
+
+  if (state.showHubs) {
+    const maxHub = filteredHubs.length > 0 ? filteredHubs[0].total : 1;
+    filteredHubs.slice(0, 120).forEach(h => {
+      const color = MODE_COLORS[h.mode] || "#38bdf8";
+      const radius = Math.max(4, Math.min(13, 4 + Math.sqrt(h.total / maxHub) * 9));
+      const marker = L.circleMarker([h.lat, h.lon], {
+        radius,
+        fillColor: color,
+        color: "#0b0f19",
+        weight: 1.2,
+        fillOpacity: 0.88
+      }).bindTooltip(
+        `<b>${h.name}</b> <span style="color:${color}">(${h.mode})</span><br/>` +
+        `Comuna: ${h.comuna} | Servicio/Línea: <b>${h.service}</b><br/>` +
+        `Subidas muestra exp: <b>${Math.round(h.total).toLocaleString()}</b> (PM: ${Math.round(h.pm)} | PT: ${Math.round(h.pt)})<br/>` +
+        `Tiempo etapa prom: ${h.avg_stage_min.toFixed(1)} min`
+      );
+      marker.on("click", () => {
+        state.commune = h.comuna;
+        selCommune.value = h.comuna;
+        renderDashboard();
+      });
+      hubsLayer.addLayer(marker);
+
+      if (state.useGoogleMaps && gmap && window.google) {
+        const gCircle = new google.maps.Marker({
+          position: { lat: h.lat, lng: h.lon },
+          map: gmap,
+          title: `${h.name} (${h.mode}) - ${Math.round(h.total)} subidas`,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: radius,
+            fillColor: color,
+            fillOpacity: 0.9,
+            strokeColor: "#0b0f19",
+            strokeWeight: 1
+          }
+        });
+        gmapOverlays.push(gCircle);
+      }
+    });
+  }
+
+  if (state.showCommunes) {
+    Object.values(DATA.communes).forEach(c => {
+      const isSelected = state.commune === c.name;
+      const cm = L.circleMarker([c.lat, c.lon], {
+        radius: isSelected ? 8 : 4,
+        fillColor: isSelected ? "#38bdf8" : "#94a3b8",
+        color: "#0f172a",
+        weight: 1.5,
+        fillOpacity: isSelected ? 1.0 : 0.65
+      }).bindTooltip(`Comuna: <b>${c.name}</b> (Click para filtrar flujos OD)`);
+      cm.on("click", () => {
+        state.commune = state.commune === c.name ? "ALL" : c.name;
+        selCommune.value = state.commune;
+        renderDashboard();
+      });
+      communesLayer.addLayer(cm);
+    });
+  }
+
+  // 3. Render Top OD Corridors Table
+  const tbody = document.getElementById("od-tbody");
+  tbody.innerHTML = "";
+  document.getElementById("tbl-count").textContent = `${corridors.length} pares OD`;
+  corridors.slice(0, 60).forEach(c => {
+    const tr = document.createElement("tr");
+    const color = MODE_COLORS[c.mode] || "#38bdf8";
+    tr.innerHTML = `
+      <td><b>${c.origin}</b> → ${c.dest}</td>
+      <td><span class="mode-tag" style="background:${color}22; color:${color}; border:1px solid ${color}55;">${c.mode}</span></td>
+      <td>${Math.round(c.trips).toLocaleString()}</td>
+      <td>${c.intermodal_pct.toFixed(1)}%</td>
+      <td>${c.avg_min.toFixed(1)} min</td>
+      <td>${c.avg_km.toFixed(1)} km</td>
+    `;
+    tr.addEventListener("click", () => {
+      state.commune = c.origin;
+      selCommune.value = c.origin;
+      const orig = DATA.communes[c.origin];
+      if (orig) leafletMap.setView([orig.lat, orig.lon], 12);
+      renderDashboard();
+    });
+    tbody.appendChild(tr);
+  });
+
+  // 4. Generate Automated Insights for Current View
+  const insightsEl = document.getElementById("insights-list");
+  const insights = [];
+  if (topC) {
+    insights.push(
+      `<b>Corredor dominante (${state.year}):</b> <b>${topC.origin} → ${topC.dest}</b> vía <b>${topC.mode}</b> concentra ${Math.round(topC.trips).toLocaleString()} viajes expandidos con un tiempo medio de <b>${topC.avg_min.toFixed(1)} min</b> (${topC.avg_km.toFixed(1)} km).`
+    );
+  }
+  const metroMin = corridors.filter(c => c.mode === "METRO").reduce((a, b) => a + b.trips * b.avg_min, 0) /
+                   Math.max(1, corridors.filter(c => c.mode === "METRO").reduce((a, b) => a + b.trips, 0));
+  const busMin = corridors.filter(c => c.mode === "BUS").reduce((a, b) => a + b.trips * b.avg_min, 0) /
+                 Math.max(1, corridors.filter(c => c.mode === "BUS").reduce((a, b) => a + b.trips, 0));
+  if (metroMin > 0 && busMin > 0) {
+    const diff = busMin - metroMin;
+    insights.push(
+      `<b>Brecha modal de tiempo de viaje:</b> En la selección actual, los viajes iniciados en <b>Metro</b> promedian <b>${metroMin.toFixed(1)} min</b> frente a <b>${busMin.toFixed(1)} min</b> en <b>Bus</b> (${diff >= 0 ? 'Bus tarda +' + diff.toFixed(1) + ' min más' : 'Metro tarda +' + Math.abs(diff).toFixed(1) + ' min'}).`
+    );
+  }
+  if (state.commune !== "ALL") {
+    const outbound = DATA.od_flows.filter(f => f.year === state.year && f.origin === state.commune && (state.period === "ALL" || f.macro_period === state.period)).reduce((s, f) => s + f.trips, 0);
+    const inbound = DATA.od_flows.filter(f => f.year === state.year && f.dest === state.commune && (state.period === "ALL" || f.macro_period === state.period)).reduce((s, f) => s + f.trips, 0);
+    const ratio = inbound > 0 ? (outbound / inbound) : 1;
+    const role = ratio > 1.25 ? "Comuna Generadora / Dormitorio (emite más viajes de los que recibe)" :
+                 ratio < 0.8 ? "Comuna Atractora de Actividad (recibe más viajes de los que emite)" :
+                 "Comuna de Flujo Balanceado";
+    insights.push(
+      `<b>Balance Neto de ${state.commune}:</b> Emite <b>${Math.round(outbound).toLocaleString()}</b> viajes y recibe <b>${Math.round(inbound).toLocaleString()}</b> (Ratio Salida/Entrada = <b>${ratio.toFixed(2)}x</b> → <i>${role}</i>).`
+    );
+  } else {
+    insights.push(
+      `<b>Comparación 2019 vs 2023:</b> El tiempo promedio de viaje pasó de <b>${prevSum.avgMin.toFixed(1)} min</b> (${otherYear}) a <b>${currSum.avgMin.toFixed(1)} min</b> (${state.year}), con un <b>${currSum.intermodalPct.toFixed(1)}%</b> de viajes intermodales (combinación Bus/Metro/Zona Paga/Metrotren).`
+    );
+  }
+  insightsEl.innerHTML = insights.map(i => `<li>${i}</li>`).join("");
+
+  // 5. Render Half-Hourly Demand Chart
+  renderHalfHourChart();
+}
+
+function renderHalfHourChart() {
+  const modes = state.mode === "ALL" ? ["METRO", "BUS", "ZONA PAGA", "METROTREN"] : [state.mode];
+  const traces = [];
+
+  modes.forEach(m => {
+    const rows23 = DATA.half_hour_curves.filter(r => r.year === "2023" && r.mode === m);
+    const rows19 = DATA.half_hour_curves.filter(r => r.year === "2019" && r.mode === m);
+
+    traces.push({
+      x: rows23.map(r => r.mh),
+      y: rows23.map(r => r.expanded_trips),
+      name: `${m} 2023`,
+      type: "scatter",
+      mode: "lines",
+      line: { color: MODE_COLORS[m], width: 2.5 }
+    });
+    traces.push({
+      x: rows19.map(r => r.mh),
+      y: rows19.map(r => r.expanded_trips),
+      name: `${m} 2019`,
+      type: "scatter",
+      mode: "lines",
+      line: { color: MODE_COLORS[m], width: 1.5, dash: "dot" },
+      opacity: 0.7
+    });
+  });
+
+  Plotly.react("chart-halfhour", traces, {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(0,0,0,0)",
+    font: { color: "#cbd5e1", size: 10 },
+    margin: { t: 12, r: 12, b: 36, l: 46 },
+    xaxis: { title: "Media Hora", gridcolor: "#1e293b", tickangle: -45 },
+    yaxis: { title: "Viajes Expandidos", gridcolor: "#1e293b" },
+    legend: { orientation: "h", y: 1.14, x: 0 }
+  }, { displayModeBar: false, responsive: true });
+}
+
+function renderStationProfileChart() {
+  const idx = parseInt(selStation.value || "0", 10);
+  const st = DATA.metro_2023_profiles[idx];
+  if (!st) return;
+  const mhs = Object.keys(st.half_hours);
+  const vals = mhs.map(k => st.half_hours[k]);
+
+  Plotly.react("chart-station", [{
+    x: mhs,
+    y: vals,
+    type: "bar",
+    marker: { color: "#ef4444" },
+    name: st.station
+  }], {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(0,0,0,0)",
+    font: { color: "#cbd5e1", size: 10 },
+    margin: { t: 10, r: 12, b: 38, l: 46 },
+    xaxis: { gridcolor: "#1e293b", tickangle: -45 },
+    yaxis: { title: "Subidas Prom. Laboral", gridcolor: "#1e293b" }
+  }, { displayModeBar: false, responsive: true });
+}
+
+// Event Listeners
+document.getElementById("sel-year").addEventListener("change", e => { state.year = e.target.value; renderDashboard(); });
+document.getElementById("sel-period").addEventListener("change", e => { state.period = e.target.value; renderDashboard(); });
+document.getElementById("sel-purpose").addEventListener("change", e => { state.purpose = e.target.value; renderDashboard(); });
+selCommune.addEventListener("change", e => {
+  state.commune = e.target.value;
+  if (state.commune !== "ALL" && DATA.communes[state.commune]) {
+    const c = DATA.communes[state.commune];
+    leafletMap.setView([c.lat, c.lon], 12);
+  } else {
+    leafletMap.setView([-33.455, -70.655], 11);
+  }
+  renderDashboard();
+});
+document.getElementById("sel-direction").addEventListener("change", e => { state.direction = e.target.value; renderDashboard(); });
+document.getElementById("rng-topn").addEventListener("input", e => {
+  state.topN = parseInt(e.target.value, 10);
+  document.getElementById("lbl-topn").textContent = state.topN;
+  renderDashboard();
+});
+document.getElementById("chk-arcs").addEventListener("change", e => { state.showArcs = e.target.checked; renderDashboard(); });
+document.getElementById("chk-hubs").addEventListener("change", e => { state.showHubs = e.target.checked; renderDashboard(); });
+document.getElementById("chk-communes").addEventListener("change", e => { state.showCommunes = e.target.checked; renderDashboard(); });
+selStation.addEventListener("change", renderStationProfileChart);
+
+document.querySelectorAll("#mode-pills .pill").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#mode-pills .pill").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.mode = btn.dataset.mode;
+    renderDashboard();
+  });
+});
+
+document.getElementById("btn-reset").addEventListener("click", () => {
+  state.year = "2023";
+  state.mode = "ALL";
+  state.period = "ALL";
+  state.purpose = "ALL";
+  state.commune = "ALL";
+  state.direction = "BOTH";
+  state.topN = 35;
+  document.getElementById("sel-year").value = "2023";
+  document.getElementById("sel-period").value = "ALL";
+  document.getElementById("sel-purpose").value = "ALL";
+  selCommune.value = "ALL";
+  document.getElementById("sel-direction").value = "BOTH";
+  document.getElementById("rng-topn").value = 35;
+  document.getElementById("lbl-topn").textContent = "35";
+  document.querySelectorAll("#mode-pills .pill").forEach(b => b.classList.toggle("active", b.dataset.mode === "ALL"));
+  leafletMap.setView([-33.455, -70.655], 11);
+  renderDashboard();
+});
+
+// Google Maps API Modal Logic
+const gmapModal = document.getElementById("gmap-modal");
+const inpGmapKey = document.getElementById("inp-gmap-key");
+document.getElementById("btn-gmap-key").addEventListener("click", () => {
+  inpGmapKey.value = state.gmapKey;
+  gmapModal.style.display = "flex";
+});
+document.getElementById("btn-gmap-cancel").addEventListener("click", () => {
+  gmapModal.style.display = "none";
+});
+document.getElementById("btn-gmap-save").addEventListener("click", () => {
+  const key = inpGmapKey.value.trim();
+  state.gmapKey = key;
+  localStorage.setItem("METRO_OD_GMAP_KEY", key);
+  gmapModal.style.display = "none";
+  if (!key) {
+    state.useGoogleMaps = false;
+    document.getElementById("gmap-canvas").style.display = "none";
+    document.getElementById("leaflet-map").style.display = "block";
+    leafletMap.invalidateSize();
+    renderDashboard();
+    return;
+  }
+  activateGoogleMaps(key);
+});
+
+function activateGoogleMaps(apiKey) {
+  state.useGoogleMaps = true;
+  document.getElementById("leaflet-map").style.display = "none";
+  const canvas = document.getElementById("gmap-canvas");
+  canvas.style.display = "block";
+
+  window.initMetroGoogleMap = function() {
+    gmap = new google.maps.Map(canvas, {
+      center: { lat: -33.455, lng: -70.655 },
+      zoom: 11,
+      styles: [
+        { elementType: "geometry", stylers: [{ color: "#1d2c4d" }] },
+        { elementType: "labels.text.fill", stylers: [{ color: "#8ec3b9" }] },
+        { elementType: "labels.text.stroke", stylers: [{ color: "#1a3646" }] },
+        { featureType: "road", elementType: "geometry", stylers: [{ color: "#304a7d" }] },
+        { featureType: "water", elementType: "geometry", stylers: [{ color: "#0e1626" }] }
+      ]
+    });
+    const transitLayer = new google.maps.TransitLayer();
+    transitLayer.setMap(gmap);
+    renderDashboard();
+  };
+
+  if (window.google && window.google.maps) {
+    window.initMetroGoogleMap();
+  } else {
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&callback=initMetroGoogleMap`;
+    script.async = true;
+    document.head.appendChild(script);
+  }
+}
+
+// Initial Render
+renderDashboard();
+renderStationProfileChart();
+</script>
+</body>
+</html>
