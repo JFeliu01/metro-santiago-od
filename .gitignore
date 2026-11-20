@@ -1,10 +1,8 @@
-# Ignore large raw transit datasets (~20.7 GB CSVs, XLSBs, GTFS feeds) and processed Parquet outputs
 data/**/*.csv
 data/**/*.xlsb
 data/**/*.parquet
 data/GTFS/*.txt
 
-# Keep small schema definition text files in data/2019/ and data/2023/ and folder placeholders
 !data/2019/*.txt
 !data/2023/*.txt
 !data/processed/.gitkeep
