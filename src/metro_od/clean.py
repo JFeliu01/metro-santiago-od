@@ -150,7 +150,11 @@ def _sql_decode_int_map(col_expr: str, mapping: Dict[int, str]) -> str:
 def build_clean_etapas_query(year: str, limit: Optional[int] = None) -> str:
     """Return a DuckDB SQL query that cleans and harmonizes `etapas_2019` or `etapas_2023`."""
     spec = DATASETS[f"etapas_{year}"]
-    csv_path = spec.path.as_posix()
+    csv_path = (
+        (spec.path.parent / "etapas201904*_transparencia.csv").as_posix()
+        if year == "2019"
+        else spec.path.as_posix()
+    )
     limit_clause = f"LIMIT {int(limit)}" if limit else ""
 
     extra_2023_cols = (
@@ -261,7 +265,11 @@ def build_clean_etapas_query(year: str, limit: Optional[int] = None) -> str:
 def build_clean_viajes_query(year: str, limit: Optional[int] = None) -> str:
     """Return a DuckDB SQL query that cleans and harmonizes `viajes_2019` or `viajes_2023` into a unified schema."""
     spec = DATASETS[f"viajes_{year}"]
-    csv_path = spec.path.as_posix()
+    csv_path = (
+        (spec.path.parent / "viajes201904*_transparencia.csv").as_posix()
+        if year == "2019"
+        else spec.path.as_posix()
+    )
     limit_clause = f"LIMIT {int(limit)}" if limit else ""
 
     if year == "2019":

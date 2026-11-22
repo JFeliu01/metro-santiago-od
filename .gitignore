@@ -1,5 +1,7 @@
 data/**/*.csv
 data/**/*.xlsb
+data/**/*.zip
+data/**/*.rar
 data/**/*.parquet
 data/GTFS/*.txt
 
@@ -24,3 +26,10 @@ build/
 # OS / IDE artifacts
 .DS_Store
 Thumbs.db
+
+# Local secrets & Firebase logs
+.env
+docs/config.js
+firebase-debug.log
+.firebase/
+.agents/

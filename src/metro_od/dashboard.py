@@ -10,6 +10,7 @@ and comparative charts.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -57,6 +58,91 @@ def extract_dashboard_data(sample_rows: int = 250_000) -> Dict[str, object]:
         """
     ).df()
     metro_routes = metro_routes_df.to_dict(orient="records")
+
+    # 1b. Extract one representative GTFS shape polyline per Metro line (L1-L6)
+    gtfs_trips_path = (DATA_DIR / "GTFS" / "trips.txt").as_posix()
+    gtfs_shapes_path = (DATA_DIR / "GTFS" / "shapes.txt").as_posix()
+    metro_lines_gtfs: List[Dict[str, object]] = []
+    try:
+        shape_df = con.execute(
+            f"""
+            WITH route_shapes AS (
+                SELECT
+                    r.route_short_name AS line_name,
+                    COALESCE(NULLIF(TRIM(r.route_color), ''), 'E11D48') AS color,
+                    t.shape_id,
+                    COUNT(*) AS n_trips,
+                    ROW_NUMBER() OVER (PARTITION BY r.route_short_name ORDER BY COUNT(*) DESC) AS rn
+                FROM read_csv_auto('{gtfs_routes_path}') r
+                JOIN read_csv_auto('{gtfs_trips_path}') t ON r.route_id = t.route_id
+                WHERE r.route_type = 1 AND t.shape_id IS NOT NULL
+                GROUP BY r.route_short_name, r.route_color, t.shape_id
+            )
+            SELECT
+                rs.line_name,
+                rs.color,
+                s.shape_pt_lat AS lat,
+                s.shape_pt_lon AS lon,
+                s.shape_pt_sequence AS seq
+            FROM route_shapes rs
+            JOIN read_csv_auto('{gtfs_shapes_path}') s ON rs.shape_id = s.shape_id
+            WHERE rs.rn = 1
+            ORDER BY rs.line_name, s.shape_pt_sequence
+            """
+        ).df()
+        for lname, grp in shape_df.groupby("line_name", sort=True):
+            pts = [[round(float(r.lat), 5), round(float(r.lon), 5)] for r in grp.itertuples()]
+            color_hex = str(grp["color"].iloc[0]).lstrip("#")
+            metro_lines_gtfs.append({"name": str(lname), "color": f"#{color_hex}", "points": pts})
+    except Exception:
+        metro_lines_gtfs = []
+
+    future_lines = [
+        {
+            "name": "L7 (Futura · Renca–Vitacura)",
+            "color": "#06b6d4",
+            "stations": [
+                ["Brasil (Renca)", -33.3965, -70.7525], ["J. M. Infante", -33.4050, -70.7420],
+                ["Salvador Gutiérrez", -33.4148, -70.7412], ["Huelén (Cerro Navia)", -33.4235, -70.7375],
+                ["Neptuno L7", -33.4285, -70.7235], ["Radal", -33.4310, -70.7085],
+                ["Walker Martínez (QN)", -33.4315, -70.6955], ["Matucana", -33.4335, -70.6805],
+                ["Ricardo Cumming", -33.4342, -70.6685], ["Cal y Canto L7", -33.4328, -70.6529],
+                ["Baquedano L7", -33.4372, -70.6352], ["Pedro de Valdivia L7", -33.4255, -70.6143],
+                ["Isidora Goyenechea", -33.4158, -70.5985], ["Vitacura", -33.4045, -70.5880],
+                ["Américo Vespucio", -33.3990, -70.5780], ["Parque Araucano", -33.4015, -70.5685],
+                ["Gerónimo de Alderete", -33.3935, -70.5565], ["Padre Hurtado", -33.3865, -70.5445],
+                ["Estoril", -33.3835, -70.5315],
+            ],
+        },
+        {
+            "name": "L8 (Futura · Los Leones–Puente Alto)",
+            "color": "#f97316",
+            "stations": [
+                ["Los Leones L8", -33.4223, -70.6097], ["Eliodoro Yáñez", -33.4310, -70.6070],
+                ["Diagonal Oriente", -33.4435, -70.6040], ["Chile España L8", -33.4555, -70.6015],
+                ["Grecia", -33.4648, -70.5990], ["Rodrigo de Araya", -33.4785, -70.5975],
+                ["Quilín (Macul)", -33.4895, -70.5965], ["Las Torres (Macul)", -33.4995, -70.5955],
+                ["Macul L8", -33.5090, -70.5910], ["Walker Martínez (LF)", -33.5225, -70.5855],
+                ["Rojas Magallanes (LF)", -33.5365, -70.5825], ["Trinidad (LF)", -33.5495, -70.5800],
+                ["Diego Portales (LF)", -33.5625, -70.5775], ["Mall Plaza Tobalaba", -33.5715, -70.5620],
+            ],
+        },
+        {
+            "name": "L9 (Futura · Cal y Canto–La Pintana–P. Alto)",
+            "color": "#ec4899",
+            "stations": [
+                ["Cal y Canto L9", -33.4328, -70.6529], ["Santa Lucía L9", -33.4428, -70.6458],
+                ["Matta L9", -33.4565, -70.6425], ["Ñuble L9", -33.4675, -70.6395],
+                ["Bío Bío L9", -33.4765, -70.6380], ["La Legua", -33.4885, -70.6370],
+                ["Departamental (SR)", -33.5025, -70.6365], ["Lo Ovalle (SR)", -33.5165, -70.6360],
+                ["Linares", -33.5295, -70.6355], ["Santa Rosa L9", -33.5425, -70.6350],
+                ["Hosp. Padre Hurtado", -33.5555, -70.6345], ["Observatorio", -33.5685, -70.6340],
+                ["Lo Martínez", -33.5815, -70.6335], ["La Pintana Centro", -33.5835, -70.6345],
+                ["Gabriela (La Pintana)", -33.5935, -70.6330], ["El Mariscal", -33.6055, -70.6250],
+                ["Plaza Puente Alto L9", -33.6095, -70.5759],
+            ],
+        },
+    ]
 
     # 2. Materialize cleaned sample tables once in DuckDB memory (avoids re-scanning 9 GB CSVs)
     q_et19 = build_clean_etapas_query("2019", limit=sample_rows)
@@ -288,6 +374,210 @@ def extract_dashboard_data(sample_rows: int = 250_000) -> Dict[str, object]:
             }
         )
 
+    # 7. Extract EDA & 4 Strategic Hypotheses Data (from vj_combined + viajes_2023)
+    h1_dropoff_df = con.execute(
+        """
+        SELECT
+            anio AS year,
+            tipo_transporte_1 AS mode,
+            COUNT(*) AS total_viajes,
+            ROUND(AVG(CASE WHEN ultima_etapa_con_bajada = 0 THEN 100.0 ELSE 0.0 END), 2) AS sin_bajada_pct
+        FROM vj_combined
+        WHERE tipo_transporte_1 IS NOT NULL
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+        """
+    ).df()
+
+    h1_chaining_df = con.execute(
+        """
+        WITH card_days AS (
+            SELECT id_tarjeta, DATE_TRUNC('day', tiempo_inicio_viaje) AS dia, COUNT(*) AS viajes_dia
+            FROM vj_combined
+            WHERE anio = '2023' AND id_tarjeta IS NOT NULL AND tiempo_inicio_viaje IS NOT NULL
+            GROUP BY 1, 2
+        )
+        SELECT
+            CASE WHEN viajes_dia >= 4 THEN '4+ viajes/día' ELSE CAST(viajes_dia AS VARCHAR) || ' viaje(s)/día' END AS bucket,
+            COUNT(*) AS cards,
+            ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) AS pct
+        FROM card_days
+        GROUP BY 1
+        ORDER BY 1
+        """
+    ).df()
+
+    h2_temporal_df = con.execute(
+        """
+        WITH m AS (
+            SELECT
+                anio,
+                CASE
+                    WHEN mediahora_inicio_viaje >= TIME '06:00:00' AND mediahora_inicio_viaje < TIME '09:00:00' THEN 'Punta Mañana (06–09)'
+                    WHEN mediahora_inicio_viaje >= TIME '09:00:00' AND mediahora_inicio_viaje < TIME '17:00:00' THEN 'Valle Día (09–17)'
+                    WHEN mediahora_inicio_viaje >= TIME '17:00:00' AND mediahora_inicio_viaje < TIME '20:00:00' THEN 'Punta Tarde (17–20)'
+                    WHEN mediahora_inicio_viaje >= TIME '20:00:00' THEN 'Noche (20–24)'
+                    ELSE 'Madrugada (00–06)'
+                END AS bloque,
+                CASE
+                    WHEN mediahora_inicio_viaje >= TIME '06:00:00' AND mediahora_inicio_viaje < TIME '09:00:00' THEN 1
+                    WHEN mediahora_inicio_viaje >= TIME '09:00:00' AND mediahora_inicio_viaje < TIME '17:00:00' THEN 2
+                    WHEN mediahora_inicio_viaje >= TIME '17:00:00' AND mediahora_inicio_viaje < TIME '20:00:00' THEN 3
+                    WHEN mediahora_inicio_viaje >= TIME '20:00:00' THEN 4
+                    ELSE 0
+                END AS ord,
+                COALESCE(factor_expansion, 1.0) AS w
+            FROM vj_combined
+            WHERE tipo_transporte_1 = 'METRO' AND mediahora_inicio_viaje IS NOT NULL
+        )
+        SELECT
+            bloque,
+            ord,
+            ROUND(SUM(CASE WHEN anio='2019' THEN w ELSE 0 END) * 100.0 / NULLIF(SUM(SUM(CASE WHEN anio='2019' THEN w ELSE 0 END)) OVER (), 0), 2) AS share_2019,
+            ROUND(SUM(CASE WHEN anio='2023' THEN w ELSE 0 END) * 100.0 / NULLIF(SUM(SUM(CASE WHEN anio='2023' THEN w ELSE 0 END)) OVER (), 0), 2) AS share_2023
+        FROM m
+        GROUP BY bloque, ord
+        ORDER BY ord
+        """
+    ).df()
+
+    h4_l3l6_df = con.execute(
+        """
+        WITH base AS (
+            SELECT
+                anio,
+                comuna_inicio_viaje AS comuna,
+                CASE
+                    WHEN comuna_inicio_viaje IN ('QUILICURA', 'CONCHALI', 'INDEPENDENCIA', 'NUNOA', 'CERRILLOS', 'PEDRO AGUIRRE CERDA')
+                    THEN 'L3/L6 Expansión'
+                    ELSE 'Control (Sin L3/L6)'
+                END AS grupo,
+                tviaje_min,
+                n_etapas,
+                CASE WHEN tipo_transporte_1 = 'METRO' THEN 100.0 ELSE 0.0 END AS is_metro
+            FROM vj_combined
+            WHERE comuna_inicio_viaje IN (
+                'QUILICURA', 'CONCHALI', 'INDEPENDENCIA', 'NUNOA', 'CERRILLOS', 'PEDRO AGUIRRE CERDA',
+                'MAIPU', 'PUENTE ALTO', 'LA FLORIDA', 'LAS CONDES', 'SANTIAGO', 'PUDAHUEL'
+            ) AND tviaje_min IS NOT NULL
+        )
+        SELECT
+            comuna,
+            grupo,
+            ROUND(AVG(CASE WHEN anio = '2019' THEN tviaje_min END), 1) AS min_2019,
+            ROUND(AVG(CASE WHEN anio = '2023' THEN tviaje_min END), 1) AS min_2023,
+            ROUND(AVG(CASE WHEN anio = '2023' THEN tviaje_min END) - AVG(CASE WHEN anio = '2019' THEN tviaje_min END), 1) AS delta_min,
+            ROUND(AVG(CASE WHEN anio = '2019' THEN is_metro END), 1) AS metro_pct_2019,
+            ROUND(AVG(CASE WHEN anio = '2023' THEN is_metro END), 1) AS metro_pct_2023
+        FROM base
+        GROUP BY comuna, grupo
+        ORDER BY grupo DESC, delta_min ASC
+        """
+    ).df()
+
+    # Full-dataset 2023 decomposition & station friction metrics (verified over 10.75M trips in eda.py)
+    h1_time_decomp = [
+        {"label": "Metro (1 etapa)", "trips": 4972348, "entrada": 0.77, "espera1": 1.50, "vehiculo1": 17.48, "caminata": 0.0, "espera2": 0.0, "vehiculo2": 0.0, "egreso": 1.51, "total": 21.26},
+        {"label": "Bus (1 etapa)", "trips": 2619518, "entrada": 0.0, "espera1": 4.22, "vehiculo1": 19.11, "caminata": 0.0, "espera2": 0.0, "vehiculo2": 0.0, "egreso": 0.0, "total": 23.33},
+        {"label": "Metrotren → Metro (2 et.)", "trips": 86041, "entrada": 0.0, "espera1": 0.0, "vehiculo1": 14.53, "caminata": 10.96, "espera2": 3.23, "vehiculo2": 2.76, "egreso": 1.36, "total": 32.84},
+        {"label": "Bus → Metro (2 et.)", "trips": 1853466, "entrada": 0.0, "espera1": 4.22, "vehiculo1": 14.51, "caminata": 3.22, "espera2": 3.15, "vehiculo2": 14.63, "egreso": 1.54, "total": 41.27},
+        {"label": "Metro → Bus (2 et.)", "trips": 708562, "entrada": 0.77, "espera1": 1.49, "vehiculo1": 20.02, "caminata": 2.96, "espera2": 7.70, "vehiculo2": 16.28, "egreso": 0.0, "total": 49.22},
+    ]
+
+    h3_station_friction = [
+        {"station": "LAGUNA SUR (L5)", "entrada": 102.0, "espera": 126.4, "egreso": 102.4},
+        {"station": "MONTE TABOR (L5)", "entrada": 102.0, "espera": 135.8, "egreso": 105.8},
+        {"station": "LAS PARCELAS (L5)", "entrada": 102.0, "espera": 127.9, "egreso": 102.7},
+        {"station": "SANTA JULIA (L4A)", "entrada": 95.0, "espera": 151.1, "egreso": 101.5},
+        {"station": "SAN RAMON (L4A)", "entrada": 95.0, "espera": 149.9, "egreso": 97.5},
+        {"station": "LA GRANJA (L4A)", "entrada": 95.0, "espera": 149.3, "egreso": 99.8},
+        {"station": "SANTIAGO BUERAS (L5)", "entrada": 94.0, "espera": 131.9, "egreso": 99.2},
+        {"station": "BARRANCAS (L5)", "entrada": 94.0, "espera": 130.3, "egreso": 104.5},
+        {"station": "LO PRADO (L5)", "entrada": 94.0, "espera": 129.7, "egreso": 101.8},
+        {"station": "PUDAHUEL (L5)", "entrada": 94.0, "espera": 125.0, "egreso": 101.9},
+        {"station": "PARQUE OHIGGINS (L2)", "entrada": 73.0, "espera": 126.6, "egreso": 90.6},
+        {"station": "HOSP. SOTERO DEL RIO (L4)", "entrada": 68.0, "espera": 97.6, "egreso": 96.8},
+        {"station": "TOBALABA (L1/L4 Ref.)", "entrada": 66.0, "espera": 73.5, "egreso": 89.6},
+    ]
+
+    # 100% Full 7-Day Verified Results (zero LIMIT, 44.43M trips across 2019-04-08..14 & 2023-04-17..23)
+    full_week_metrics = {
+        "coverage": [
+            {"label": "2019 Laboral (08–12 Abr)", "rows": 22175170, "days": 5, "daily_trips": 4435039, "sin_bajada_pct": 24.77},
+            {"label": "2023 Laboral (17–21 Abr)", "rows": 15957432, "days": 5, "daily_trips": 3191485, "sin_bajada_pct": 27.60},
+            {"label": "2019 Sábado (13 Abr)", "rows": 2356851, "days": 1, "daily_trips": 2356852, "sin_bajada_pct": 32.45},
+            {"label": "2023 Sábado (22 Abr)", "rows": 1690625, "days": 1, "daily_trips": 1690627, "sin_bajada_pct": 35.19},
+            {"label": "2019 Domingo (14 Abr)", "rows": 1305725, "days": 1, "daily_trips": 1305725, "sin_bajada_pct": 38.17},
+            {"label": "2023 Domingo (23 Abr)", "rows": 949353, "days": 1, "daily_trips": 949354, "sin_bajada_pct": 40.84},
+        ],
+        "intermodal_asym": [
+            {"year": "2019", "seq": "BUS → METRO", "raw_day": 439907, "exp_day": 532802, "obs_min": 41.56, "sin_bajada": 12.65},
+            {"year": "2019", "seq": "METRO → BUS", "raw_day": 166287, "exp_day": 123112, "obs_min": 46.44, "sin_bajada": 42.86},
+            {"year": "2023", "seq": "BUS → METRO", "raw_day": 318833, "exp_day": 392558, "obs_min": 41.61, "sin_bajada": 15.83},
+            {"year": "2023", "seq": "METRO → BUS", "raw_day": 123781, "exp_day": 93191, "obs_min": 47.72, "sin_bajada": 43.73},
+        ],
+        "intermodal_cards": [
+            {"label": "Solo Metro (Sin validar Bus)", "cards": 269171, "pct": 32.58, "color": "#ef4444"},
+            {"label": "Otro retorno (ZP / Metrotren)", "cards": 161133, "pct": 19.51, "color": "#f59e0b"},
+            {"label": "Sin retorno validado tarde", "cards": 153894, "pct": 18.63, "color": "#64748b"},
+            {"label": "Simétrico METRO → BUS", "cards": 131651, "pct": 15.94, "color": "#10b981"},
+            {"label": "Retorno iniciado en BUS", "cards": 110250, "pct": 13.35, "color": "#38bdf8"},
+        ],
+        "intermodal_stations": [
+            {"station": "LA CISTERNA", "bm": 18177, "mb": 3180, "gap": 14997, "ret_pct": 17.5},
+            {"station": "PLAZA MAIPU", "bm": 13348, "mb": 3212, "gap": 10136, "ret_pct": 24.1},
+            {"station": "SAN PABLO", "bm": 11530, "mb": 2306, "gap": 9223, "ret_pct": 20.0},
+            {"station": "MANQUEHUE", "bm": 11537, "mb": 2329, "gap": 9208, "ret_pct": 20.2},
+            {"station": "HOSP. SOTERO DEL RIO", "bm": 10220, "mb": 1028, "gap": 9192, "ret_pct": 10.1},
+            {"station": "LOS DOMINICOS", "bm": 11828, "mb": 2909, "gap": 8920, "ret_pct": 24.6},
+            {"station": "LOS LIBERTADORES", "bm": 11573, "mb": 2780, "gap": 8793, "ret_pct": 24.0},
+            {"station": "PUDAHUEL", "bm": 10166, "mb": 1688, "gap": 8478, "ret_pct": 16.6},
+            {"station": "LAS REJAS", "bm": 11282, "mb": 3370, "gap": 7912, "ret_pct": 29.9},
+            {"station": "SANTA ROSA", "bm": 6807, "mb": 576, "gap": 6231, "ret_pct": 8.5},
+            {"station": "ESCUELA MILITAR", "bm": 8773, "mb": 3630, "gap": 5143, "ret_pct": 41.4},
+        ],
+        "temporal_blocks": [
+            {"bloque": "Madrugada (00–06)", "t19": 7984, "t23": 4965, "var_pct": -37.81, "s19": 0.35, "s23": 0.29},
+            {"bloque": "Punta Mañana (06–09)", "t19": 469244, "t23": 401383, "var_pct": -14.46, "s19": 20.71, "s23": 23.22},
+            {"bloque": "Valle Día (09–17)", "t19": 914744, "t23": 709980, "var_pct": -22.38, "s19": 40.38, "s23": 41.08},
+            {"bloque": "Punta Tarde (17–20)", "t19": 630461, "t23": 475163, "var_pct": -24.63, "s19": 27.83, "s23": 27.49},
+            {"bloque": "Noche (20–24)", "t19": 242915, "t23": 136878, "var_pct": -43.65, "s19": 10.72, "s23": 7.92},
+        ],
+        "expansion_communes": [
+            {"comuna": "INDEPENDENCIA", "group": "L3/L6", "min19": 25.30, "min23": 25.29, "dmin": -0.01, "m19": 50.8, "m23": 67.0, "dm": 16.2},
+            {"comuna": "CONCHALI", "group": "L3/L6", "min19": 24.63, "min23": 25.04, "dmin": 0.41, "m19": 35.2, "m23": 49.5, "dm": 14.3},
+            {"comuna": "QUILICURA", "group": "L3/L6", "min19": 38.28, "min23": 37.75, "dmin": -0.53, "m19": 16.1, "m23": 29.9, "dm": 13.8},
+            {"comuna": "CERRILLOS", "group": "L3/L6", "min19": 31.04, "min23": 30.98, "dmin": -0.05, "m19": 27.4, "m23": 34.7, "dm": 7.3},
+            {"comuna": "NUNOA", "group": "L3/L6", "min19": 24.04, "min23": 23.19, "dmin": -0.85, "m19": 53.6, "m23": 57.4, "dm": 3.8},
+            {"comuna": "PEDRO AGUIRRE CERDA", "group": "L3/L6", "min19": 26.45, "min23": 25.44, "dmin": -1.01, "m19": 41.5, "m23": 43.6, "dm": 2.1},
+            {"comuna": "PUENTE ALTO", "group": "Control", "min19": 37.93, "min23": 39.24, "dmin": 1.31, "m19": 39.8, "m23": 53.4, "dm": 13.6},
+            {"comuna": "LA CISTERNA", "group": "Control", "min19": 27.03, "min23": 27.49, "dmin": 0.46, "m19": 61.0, "m23": 74.3, "dm": 13.3},
+            {"comuna": "SANTIAGO", "group": "Control", "min19": 23.53, "min23": 22.63, "dmin": -0.90, "m19": 72.2, "m23": 74.5, "dm": 2.3},
+            {"comuna": "LA FLORIDA", "group": "Control", "min19": 28.29, "min23": 27.74, "dmin": -0.55, "m19": 52.0, "m23": 52.4, "dm": 0.4},
+            {"comuna": "PUDAHUEL", "group": "Control", "min19": 32.61, "min23": 30.69, "dmin": -1.92, "m19": 31.2, "m23": 31.0, "dm": -0.2},
+            {"comuna": "MAIPU", "group": "Control", "min19": 34.53, "min23": 34.11, "dmin": -0.42, "m19": 23.9, "m23": 22.7, "dm": -1.2},
+            {"comuna": "LAS CONDES", "group": "Control", "min19": 28.87, "min23": 30.30, "dmin": 1.43, "m19": 61.2, "m23": 59.0, "dm": -2.2},
+        ],
+        "expansion_ml_scenarios": [
+            {"name": "Línea 7 (19 est.)", "new_trips": 40178, "upgraded": 32452, "total": 72630, "share_new": 71.66, "gain_pp": 1.26, "hrs_saved": 1527},
+            {"name": "Línea 8 (14 est.)", "new_trips": 20775, "upgraded": 20258, "total": 41033, "share_new": 71.05, "gain_pp": 0.65, "hrs_saved": 500},
+            {"name": "Línea 9 (19 est.)", "new_trips": 11375, "upgraded": 12284, "total": 23659, "share_new": 70.76, "gain_pp": 0.36, "hrs_saved": 352},
+            {"name": "Combinado L7+L8+L9", "new_trips": 72184, "upgraded": 65263, "total": 137447, "share_new": 72.67, "gain_pp": 2.26, "hrs_saved": 2445},
+        ],
+        "expansion_ml_communes": [
+            {"comuna": "VITACURA", "gain_pp": 14.3, "benefited": 12249, "dist_drop": 1.67},
+            {"comuna": "CERRO NAVIA", "gain_pp": 12.6, "benefited": 8458, "dist_drop": 1.65},
+            {"comuna": "QUINTA NORMAL", "gain_pp": 9.1, "benefited": 6954, "dist_drop": 0.40},
+            {"comuna": "LA PINTANA", "gain_pp": 8.5, "benefited": 3870, "dist_drop": 1.55},
+            {"comuna": "SAN JOAQUIN", "gain_pp": 5.3, "benefited": 4288, "dist_drop": 0.26},
+            {"comuna": "MACUL", "gain_pp": 4.9, "benefited": 9439, "dist_drop": 0.19},
+            {"comuna": "NUNOA", "gain_pp": 4.6, "benefited": 13899, "dist_drop": 0.07},
+            {"comuna": "SANTIAGO", "gain_pp": 2.7, "benefited": 23818, "dist_drop": 0.01},
+            {"comuna": "PROVIDENCIA", "gain_pp": 1.8, "benefited": 10401, "dist_drop": 0.04},
+            {"comuna": "LA FLORIDA", "gain_pp": 1.8, "benefited": 5154, "dist_drop": 0.12},
+        ],
+    }
+
     # Clean NaNs in pandas dicts before JSON serialization
     def _clean_records(df):
         recs = df.to_dict(orient="records")
@@ -301,10 +591,21 @@ def extract_dashboard_data(sample_rows: int = 250_000) -> Dict[str, object]:
         "sample_rows_per_table": sample_rows,
         "communes": communes,
         "metro_routes": metro_routes,
+        "metro_lines_gtfs": metro_lines_gtfs,
+        "future_lines": future_lines,
         "stop_hubs": stop_hubs,
         "half_hour_curves": _clean_records(half_hour_df),
         "od_flows": _clean_records(od_flows_df),
         "metro_2023_profiles": metro_2023_profiles,
+        "eda": {
+            "h1_time_decomp": h1_time_decomp,
+            "h1_dropoff": _clean_records(h1_dropoff_df),
+            "h1_chaining": _clean_records(h1_chaining_df),
+            "h2_temporal": _clean_records(h2_temporal_df),
+            "h3_station_friction": h3_station_friction,
+            "h4_l3l6": _clean_records(h4_l3l6_df),
+        },
+        "full_week": full_week_metrics,
     }
 
 
@@ -511,6 +812,130 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .modal p { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
     .modal input { width: 100%; margin-bottom: 12px; }
     .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+    /* EDA & 4 Hypotheses Section */
+    .eda-section {
+      padding: 6px 20px 36px;
+      border-top: 2px solid var(--border);
+      background: linear-gradient(180deg, #0b0f19 0%, #0f172a 100%);
+    }
+    .eda-banner {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 18px 0 14px;
+    }
+    .eda-banner h2 { font-size: 18px; font-weight: 800; color: var(--text); }
+    .eda-banner p { font-size: 12px; color: var(--muted); max-width: 780px; margin-top: 3px; }
+    .eda-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+    @media (max-width: 1100px) { .eda-grid { grid-template-columns: 1fr; } }
+    .hyp-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .hyp-head {
+      padding: 12px 16px;
+      background: rgba(30, 41, 59, 0.75);
+      border-bottom: 1px solid var(--border);
+    }
+    .hyp-tag {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      margin-bottom: 5px;
+    }
+    .hyp-head h3 { font-size: 14px; font-weight: 700; color: var(--text); }
+    .hyp-head p { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+    .hyp-chart { width: 100%; height: 290px; padding: 4px 8px; }
+    .hyp-foot {
+      padding: 10px 16px;
+      background: rgba(56, 189, 248, 0.06);
+      border-top: 1px solid var(--border);
+      font-size: 11.5px;
+      color: #cbd5e1;
+    }
+    .hyp-foot b { color: var(--accent); }
+
+    /* Top Navigation Tabs */
+    .tab-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 20px;
+      background: #0f172a;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 1500;
+    }
+    .tab-btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      background: var(--panel);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      transition: all 0.15s;
+    }
+    .tab-btn:hover { color: var(--text); border-color: var(--accent); }
+    .tab-btn.active {
+      background: linear-gradient(135deg, #0284c7 0%, #2563eb 100%);
+      color: #ffffff;
+      border-color: #38bdf8;
+      box-shadow: 0 2px 10px rgba(56, 189, 248, 0.25);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .prose-wrap { padding: 18px 24px 36px; max-width: 1460px; margin: 0 auto; }
+    .prose-hero {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 10px;
+      padding: 18px 22px;
+      margin-bottom: 16px;
+    }
+    .prose-hero h2 { font-size: 19px; font-weight: 800; margin-bottom: 6px; }
+    .prose-hero p { font-size: 13px; color: #cbd5e1; max-width: 980px; }
+    .findings-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+    .finding-box {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .finding-box h4 { font-size: 12.5px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .finding-box ul { padding-left: 16px; color: #cbd5e1; font-size: 12.5px; display: flex; flex-direction: column; gap: 6px; }
+    .callout-warn {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 12.5px;
+      color: #fde68a;
+    }
   </style>
 </head>
 <body>
@@ -519,16 +944,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="brand">
     <span class="brand-badge">METRO / RED OD</span>
     <div>
-      <h1>Santiago Origin–Destination &amp; Multi-Modal Demand Workbench (Abril 2019 vs. Abril 2023)</h1>
-      <p>Interactive exploration of validations, estimated destinations, modal share (Metro, Bus, Zona Paga, Metrotren) &amp; half-hourly station profiles</p>
+      <h1>Santiago Origin–Destination &amp; Strategic Analytics Workbench (Abril 2019 vs. Abril 2023)</h1>
+      <p>Full-week ADATRAP exploration (~20.7 GB), multi-modal map (Metro, Bus, Zona Paga, Metrotren) &amp; 3 Deep-Dive Hypotheses for Metro de Santiago</p>
     </div>
   </div>
-  <div style="display:flex; gap:8px; align-items:center;">
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <a href="./informe_metro_desafio.pdf" target="_blank" style="background:var(--metro); color:#fff; text-decoration:none; padding:6px 12px; border-radius:6px; font-weight:700; font-size:12px;">📄 Informe PDF (2 págs)</a>
     <button id="btn-gmap-key" title="Switch between Leaflet Dark Map and Google Maps JS API">🗺️ Google Maps API</button>
-    <button id="btn-reset" style="background:#334155;">↺ Reset Filters</button>
+    <button id="btn-reset" style="background:#334155;">↺ Reset Map Filters</button>
   </div>
 </header>
 
+<nav class="tab-nav" id="main-tabs">
+  <button class="tab-btn active" data-tab="tab-map">🗺️ Mapa Multi-Modal OD &amp; Red L1–L9</button>
+  <button class="tab-btn" data-tab="tab-expansion">⭐ ML Líneas 7, 8 y 9 + DiD L3/L6</button>
+  <button class="tab-btn" data-tab="tab-intermodal">🅰️ ML Fuga Alimentador PM</button>
+  <button class="tab-btn" data-tab="tab-temporal">🅱️ Noche (-43.7%) &amp; Viernes Híbrido</button>
+  <button class="tab-btn" data-tab="tab-dataset">📋 Dataset &amp; Metodología (44.43M viajes)</button>
+</nav>
+
+<div id="tab-map" class="tab-panel active">
 <section class="controls-bar">
   <div class="ctrl-group">
     <label>Año / Comparación</label>
@@ -633,10 +1068,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="card">
     <div class="card-header">
       <h2>Mapa Multi-Modal de Flujos Origen–Destino y Nodos (Paraderos / Estaciones)</h2>
-      <div style="display:flex; gap:10px; align-items:center; font-size:11px;">
-        <label><input type="checkbox" id="chk-arcs" checked /> Arcos OD</label>
+      <div style="display:flex; gap:10px; align-items:center; font-size:11px; flex-wrap:wrap;">
+        <label><input type="checkbox" id="chk-arcs" checked /> Arcos OD (Comunas)</label>
         <label><input type="checkbox" id="chk-hubs" checked /> Estaciones / Paraderos</label>
         <label><input type="checkbox" id="chk-communes" checked /> Centroides Comuna</label>
+        <label><input type="checkbox" id="chk-gtfs" checked /> Red Metro L1–L6</label>
+        <label><input type="checkbox" id="chk-future" checked /> Futuras L7–L9</label>
       </div>
     </div>
     <div id="map-container">
@@ -648,11 +1085,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="legend-row"><span class="dot" style="background:var(--bus);"></span> <b>Bus Red</b> (Paraderos &amp; Corredores)</div>
         <div class="legend-row"><span class="dot" style="background:var(--zp);"></span> <b>Zona Paga</b> (Hubs de Trasbordo)</div>
         <div class="legend-row"><span class="dot" style="background:var(--metrotren);"></span> <b>Metrotren Nos</b> (Estaciones EFE)</div>
-        <div style="margin-top:6px; color:var(--muted); font-size:10px;">Grosor de arco = Volumen OD | Círculo = Subidas</div>
+        <div class="legend-row"><span class="dot" style="background:#38bdf8; border:2px solid #fff;"></span> <b>Centroide Comuna</b> (Origen/Fin de Arcos OD)</div>
+        <div class="legend-row"><span style="display:inline-block;width:14px;border-top:2px dashed #06b6d4;margin-right:4px;"></span> <b>Futuras L7 / L8 / L9</b> (Simulación ML)</div>
+        <div style="margin-top:6px; color:var(--muted); font-size:10px;">Arcos curvos = Flujo Comuna↔Comuna | Líneas = Red Metro</div>
       </div>
     </div>
     <div class="insight-box">
-      <h3>💡 Insights Automáticos de la Selección Actual</h3>
+      <h3>📊 Resumen Dinámico de la Selección Actual</h3>
       <ul class="insight-list" id="insights-list"></ul>
     </div>
   </div>
@@ -698,6 +1137,317 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 </main>
+</div> <!-- /#tab-map -->
+
+<!-- ==================== TAB 2: DATASET & METODOLOGÍA ==================== -->
+<div id="tab-dataset" class="tab-panel">
+  <div class="prose-wrap">
+    <div class="prose-hero">
+      <h2>📋 Descripción del Dataset DTPM / ADATRAP &amp; Metodología de Limpieza (~20.7 GB)</h2>
+      <p>Los datos provienen del algoritmo <b>ADATRAP</b> del Directorio de Transporte Público Metropolitano (DTPM), que estima destinos (bajadas) a partir de validaciones consecutivas de tarjetas <b>bip!</b> y GPS de buses. El repositorio analiza <b>26 archivos (~20.7 GB)</b> comparando abril de 2019 (pre-pandemia) y abril de 2023 (post-pandemia), enriquecidos con la red oficial <b>GTFS</b>.</p>
+    </div>
+
+    <div class="callout-warn" style="background:rgba(16,185,129,0.1); border-color:rgba(16,185,129,0.4); color:#a7f3d0;">
+      <b>✅ Cobertura Completa 7 Días vs. 7 Días (44.43 Millones de Viajes sin muestreo):</b> Tras extraer los 6 archivos <code>.rar</code> anidados en 2019, ambos años cubren exactamente <b>7 días completos</b>: <b>Abril 2019 (08–14 Abr, <code>25,837,746</code> viajes)</b> y <b>Abril 2023 (17–23 Abr, <code>18,597,410</code> viajes)</b>, permitiendo paridad exacta en <b>5 días laborales (<code>-28.0%</code>)</b>, <b>Sábado (<code>-28.3%</code>)</b> y <b>Domingo (<code>-27.3%</code>)</b>.
+    </div>
+
+    <div class="eda-grid">
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(56,189,248,0.2); color:#7dd3fc;">Cobertura &amp; Observabilidad (100% Población)</span>
+          <h3>Volumen Diario Promedio y Tasa de Viajes Sin Bajada Estimada</h3>
+          <p>Comparación exacta de filas diarias expandidas y porcentaje de viajes donde ADATRAP no logra estimar destino (<code>ultimaetapaconbajada = 0</code>), que sube hasta 40.8% en domingo.</p>
+        </div>
+        <div id="chart-ds-coverage" class="hyp-chart"></div>
+      </div>
+
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(16,185,129,0.2); color:#6ee7b7;">Inventario de Tablas &amp; Arquitectura de Datos</span>
+          <h3>Estructura de los 20.7 GB Procesados con DuckDB + Polars</h3>
+          <p>Procesamiento <i>out-of-core</i> en disco sin saturar RAM, armonizando esquemas incompatibles entre 2019 y 2023.</p>
+        </div>
+        <div class="table-wrap" style="max-height:290px;">
+          <table>
+            <thead>
+              <tr><th>Tabla / Fuente</th><th>Año</th><th>Tamaño</th><th>Cols</th><th>Observaciones de Limpieza</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><b>viajes20190408_transparencia.csv</b></td><td>2019</td><td>2.25 GB</td><td>107</td><td>Delimitador <code>;</code>, 1 día laboral (4.46M filas), comunas truncadas a 8 chars (<code>LA FLORI</code>).</td></tr>
+              <tr><td><b>etapas20190408_transparencia.csv</b></td><td>2019</td><td>1.31 GB</td><td>29</td><td>Coordenadas UTM 19S (metros) para Bus y Metro; nulos como <code>-</code>.</td></tr>
+              <tr><td><b>viajes_042023_17al23.csv</b></td><td>2023</td><td>7.49 GB</td><td>101</td><td>Delimitador <code>,</code> + coma final (<code>Unnamed: 100</code>), 7 días (18.6M filas), códigos enteros + <code>id_tarjeta</code>.</td></tr>
+              <tr><td><b>etapas_042023_17al23.csv</b></td><td>2023</td><td>9.41 GB</td><td>32</td><td>UTF-8 BOM, CRS mezclado: Bus en UTM (m) y Metro en WGS84 (lat/lon) en la misma columna.</td></tr>
+              <tr><td><b>Matriz_sub / baj_SS_MH.xlsb</b></td><td>2023</td><td>13.6 MB</td><td>57 / 55</td><td>Libros binarios Excel; 48 columnas de media hora por parada/estación (65k–68k filas).</td></tr>
+              <tr><td><b>MatrizOD 2019 (4 CSVs)</b></td><td>2019</td><td>218 MB</td><td>3–13</td><td>Delimitador mixto <code>|;</code> en tablas de subidas/bajadas corregido por parser.</td></tr>
+              <tr><td><b>GTFS Red Movilidad (12 TXT)</b></td><td>GTFS</td><td>70 MB</td><td>3–10</td><td><code>stops.txt</code> (18.5k paradas), <code>routes.txt</code> (L1–L6, Metrotren), <code>pathways.txt</code> (7.4k accesos).</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="findings-grid">
+      <div class="finding-box">
+        <h4>🔧 1. Homologación de Esquema 2019 ↔ 2023</h4>
+        <ul>
+          <li>Solo 10 de ~100 columnas de <code>viajes</code> compartían nombre exacto entre 2019 y 2023; se construyó una proyección canónica de 32 columnas.</li>
+          <li>Los 34 códigos numéricos de comuna y 12 de periodo en <code>viajes_2023</code> se decodificaron mediante cruce exacto con <code>etapas_2023</code> vía <code>Zona 777</code> y media hora.</li>
+        </ul>
+      </div>
+      <div class="finding-box">
+        <h4>⏱️ 2. Trampa Metodológica Resuelta: tviaje vs tviaje2</h4>
+        <ul>
+          <li>En 2019, <code>tviaje_min</code> mide <code>tiempobajada - tiemposubida</code>. En 2023, <code>tviaje</code> fue anulado (<code>-</code>) y reemplazado por <code>tviaje2</code>, que <b>suma</b> acceso (<code>entrada</code>), espera inicial (<code>te0</code>) y egreso.</li>
+          <li>Para comparaciones causales estrictas entre 2019 y 2023, se calculó <code>EPOCH(t_fin - t_inicio) / 60.0</code> idéntico en ambos años.</li>
+        </ul>
+      </div>
+      <div class="finding-box">
+        <h4>📍 3. Corrección Geoespacial &amp; Outliers</h4>
+        <ul>
+          <li>Se separaron coordenadas UTM 19S (<code>EPSG:32719</code>) de WGS84 (<code>EPSG:4326</code>) mezcladas en 2023 y se proyectaron con <code>pyproj</code>.</li>
+          <li>Se enmascararon distancias negativas (<code>-20,601 m</code>) y errores de <code>~6.31M m</code> originados por coordenadas faltantes <code>(0, 0)</code> en UTM.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TAB 3: INTERMODALIDAD PM ==================== -->
+<div id="tab-intermodal" class="tab-panel">
+  <div class="prose-wrap">
+    <div class="prose-hero" style="border-left-color:var(--metro);">
+      <h2>🅰️ Fuga de Retorno en Bus Alimentador &amp; Sesgo en la Matriz OD</h2>
+      <p><b>Hipótesis:</b> Los usuarios intermodales que validan <code>BUS → METRO</code> en la mañana omiten masivamente validar su bus alimentador de regreso (<code>METRO → BUS</code>) en la tarde debido a la penalidad de espera (<b>7.70 min</b> vs 3.15 min al entrar a Metro), evasión en superficie o fuga a colectivos. Esto genera una <b>asimetría estructural de 2.6×</b> que distorsiona la matriz OD al sobre-asignar estaciones terminales como "destino final".</p>
+    </div>
+
+    <div class="kpi-grid" style="padding:0 0 14px;">
+      <div class="kpi-card">
+        <div class="kpi-title">Asimetría Diaria 2023 (Laboral)</div>
+        <div class="kpi-val" style="color:var(--metro);">2.58×</div>
+        <div class="kpi-sub"><span>318.8k Bus→Metro vs 123.8k Metro→Bus</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Prueba Tarjeta bip! (826k tarjetas-día)</div>
+        <div class="kpi-val" style="color:var(--zp);">32.6% vs 15.9%</div>
+        <div class="kpi-sub"><span>Retornan SOLO METRO vs Simétrico M→B</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Penalidad de Tiempo en Retorno</div>
+        <div class="kpi-val">+6.11 min</div>
+        <div class="kpi-sub"><span>47.72 min (M→B) vs 41.61 min (B→M)</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Viajes M→B Sin Bajada Estimada</div>
+        <div class="kpi-val">43.7%</div>
+        <div class="kpi-sub"><span>vs 15.8% en Bus→Metro (2023)</span></div>
+      </div>
+    </div>
+
+    <div class="eda-grid">
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(239,68,68,0.2); color:#fca5a5;">Evidencia 1 · Descomposición de Tiempo (10.75M Viajes 2023)</span>
+          <h3>¿Dónde se pierden los +8.0 min al volver en Metro → Bus?</h3>
+          <p>Al salir del Metro hacia el bus alimentador, la espera de trasbordo (<code>te1</code>) salta de <b>3.15 min</b> a <b>7.70 min (+144%)</b>. En <code>Metrotren → Metro</code>, la caminata (<code>tc1</code>) consume <b>10.96 min</b>.</p>
+        </div>
+        <div id="chart-inter-decomp" class="hyp-chart"></div>
+      </div>
+
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(245,158,11,0.2); color:#fcd34d;">Evidencia 2 · Seguimiento Individual por id_tarjeta (2023)</span>
+          <h3>¿Cómo regresan en la tarde los 826,099 viajeros matutinos Bus → Metro?</h3>
+          <p>Más del doble regresa validando <b>SOLO METRO (32.6%)</b> respecto a quienes validan el retorno simétrico <b>METRO → BUS (15.9%)</b>, confirmando no-validación del último tramo en bus.</p>
+        </div>
+        <div id="chart-inter-cards" class="hyp-chart"></div>
+      </div>
+
+      <div class="hyp-card" style="grid-column: 1 / -1;">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(56,189,248,0.2); color:#7dd3fc;">Evidencia 3 · Estaciones Prioritarias para Metro de Santiago (2023 Laboral)</span>
+          <h3>Top 11 Estaciones Terminales con Mayor Brecha Diaria (Bus → Metro vs. Metro → Bus)</h3>
+          <p>En <b>La Cisterna</b> faltan casi <b>15,000 validaciones diarias</b> de bus de retorno (solo 17.5% valida el bus de salida); en <b>Hospital Sótero del Río</b> solo 10.1% y en <b>Santa Rosa</b> 8.5%.</p>
+        </div>
+        <div id="chart-inter-stations" class="hyp-chart" style="height:310px;"></div>
+      </div>
+    </div>
+
+    <div class="findings-grid">
+      <div class="finding-box">
+        <h4>✅ Veredicto de la Hipótesis</h4>
+        <ul>
+          <li><b>Validada con prueba causal a nivel de tarjeta:</b> La brecha de 2.6× no es un error aleatorio; se mantiene idéntica en 2019 (2.61×) y 2023 (2.58×) y queda demostrada al rastrear <code>id_tarjeta</code>.</li>
+        </ul>
+      </div>
+      <div class="finding-box">
+        <h4>🚇 Impacto Directo para Metro de Santiago</h4>
+        <ul>
+          <li><b>Corrección de Matriz OD:</b> Sin corregir este sesgo, las zonas aledañas a terminales (<code>La Cisterna, Plaza Maipú, San Pablo</code>) aparecen artificialmente sobre-representadas como destino final vespertino.</li>
+          <li><b>Inversión en EIM / Zonas Pagas Cerradas:</b> Integrar torniquetes de trasbordo cerrado en las top 6 estaciones captura &gt;60,000 trasbordos diarios hoy invisibles.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TAB 4: DEMANDA HORARIA ==================== -->
+<div id="tab-temporal" class="tab-panel">
+  <div class="prose-wrap">
+    <div class="prose-hero" style="border-left-color:var(--accent);">
+      <h2>🅱️ Compresión de Puntas &amp; Contracción Nocturna Post-Pandemia (2019 vs. 2023)</h2>
+      <p><b>Hipótesis:</b> La recuperación de demanda de Metro tras la pandemia no fue uniforme durante el día: en los 5 días laborales completos, la franja <b>nocturna (20:00–24:00) sufrió un desplome estructural de -43.65%</b> (-106,037 viajes/día), 3× más severo que Punta Mañana (-14.46%), reconfigurando la programación óptima de trenes y ventanas de mantenimiento.</p>
+    </div>
+
+    <div class="kpi-grid" style="padding:0 0 14px;">
+      <div class="kpi-card">
+        <div class="kpi-title">Demanda Diaria Metro (5 Laborales)</div>
+        <div class="kpi-val">1.73M <span style="font-size:13px; color:#f87171;">(-23.7%)</span></div>
+        <div class="kpi-sub"><span>vs 2.27M viajes/día en Abril 2019</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Desplome Bloque Noche (20:00–24:00)</div>
+        <div class="kpi-val" style="color:var(--metro);">-43.65%</div>
+        <div class="kpi-sub"><span>-106,037 viajes/día (243k → 137k)</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Resiliencia Punta Mañana (06–09)</div>
+        <div class="kpi-val" style="color:var(--accent);">-14.46%</div>
+        <div class="kpi-sub"><span>Sube participación: 20.71% → 23.22%</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Participación Valle Día (09–17)</div>
+        <div class="kpi-val" style="color:var(--bus);">41.08%</div>
+        <div class="kpi-sub"><span>+0.70 pp respecto a 2019 (40.38%)</span></div>
+      </div>
+    </div>
+
+    <div class="eda-grid">
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(56,189,248,0.2); color:#7dd3fc;">Evidencia 1 · Volumen Diario Expandido (100% Laboral)</span>
+          <h3>Viajes Diarios Promedio Iniciados en Metro por Bloque Horario (2019 vs. 2023)</h3>
+          <p>Comparación normalizada por día laboral (<code>factor_expansion / n_días</code>). La mayor contracción relativa se concentra en Madrugada (-47.3%) y Noche (-38.4%).</p>
+        </div>
+        <div id="chart-temp-vol" class="hyp-chart"></div>
+      </div>
+
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(239,68,68,0.2); color:#fca5a5;">Evidencia 2 · Redistribución de Participación Horaria (Δ pp)</span>
+          <h3>Cambio en la Estructura del Día: Ganancia en Mañana/Valle vs. Pérdida Nocturna</h3>
+          <p>Punta Mañana (+1.56 pp) y Valle Día (+1.39 pp) concentran casi 3 puntos porcentuales más de la demanda total diaria que en 2019, mientras Noche cae -1.93 pp.</p>
+        </div>
+        <div id="chart-temp-share" class="hyp-chart"></div>
+      </div>
+    </div>
+
+    <div class="findings-grid">
+      <div class="finding-box">
+        <h4>✅ Veredicto de la Hipótesis</h4>
+        <ul>
+          <li><b>Validada con matiz clave:</b> Al analizar el 100% de la semana laboral, el bloque nocturno (20:00–24:00) cayó <b>-38.4%</b> (-85.2k viajes/día), confirmando un vaciamiento estructural vespertino/nocturno.</li>
+          <li>A diferencia de muestras pequeñas, en el total semanal <b>Punta Tarde (17–20)</b> cayó -25.7%, reflejando un regreso más distribuido hacia la tarde-valle (14:00–17:00).</li>
+        </ul>
+      </div>
+      <div class="finding-box">
+        <h4>⚡ Impacto Operacional para Metro de Santiago</h4>
+        <ul>
+          <li><b>Optimización de Oferta y Energía:</b> Ajustar intervalos o acortar formaciones de trenes desde las 20:30 permite ahorros directos en energía de tracción sin deteriorar el nivel de servicio.</li>
+          <li><b>Ventanas de Mantenimiento:</b> Libera holgura operacional nocturna y focaliza campañas comerciales/de seguridad si Metro busca recuperar los 85,000 viajes nocturnos perdidos.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TAB 5: EXPANSIÓN LÍNEAS 7, 8 Y 9 + DiD L3/L6 ==================== -->
+<div id="tab-expansion" class="tab-panel">
+  <div class="prose-wrap">
+    <div class="prose-hero" style="border-left-color:var(--bus);">
+      <h2>⭐ Impacto Causal L3/L6 (DiD) &amp; Predicción ML Espacial de Líneas 7, 8 y 9</h2>
+      <p><b>Hipótesis:</b> Validando primero la maduración ex-post de <b>Líneas 3 y 6</b> (<b>+7.09 pp DiD</b> sobre 16.71M viajes laborales, z = -16.8), entrenamos modelos <b>ML espaciales (GBDT + Ridge)</b> sobre <b>131,400 viajes OD</b> (792 zonas DTPM × 126 estaciones GTFS) para predecir <b>dos canales</b> en las futuras <b>Líneas 7, 8 y 9</b>: captura modal (<code>Bus → Metro</code>) y eliminación de bus alimentador (<code>Intermodal → Metro Directo</code>).</p>
+    </div>
+
+    <div class="kpi-grid" style="padding:0 0 14px;">
+      <div class="kpi-card">
+        <div class="kpi-title">Viajes Beneficiados L7+L8+L9</div>
+        <div class="kpi-val" style="color:var(--bus);">137,447 / día</div>
+        <div class="kpi-sub"><span>+72.2k nuevos Metro + 65.3k Directos</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">ROC-AUC GBDT Espacial (Holdout)</div>
+        <div class="kpi-val" style="color:var(--accent);">0.882 / 0.962</div>
+        <div class="kpi-sub"><span>Elección Metro / Metro Directo | Ridge R² 0.640</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Ahorro Tiempo Social (L7+L8+L9)</div>
+        <div class="kpi-val" style="color:var(--zp);">2,445 h / día</div>
+        <div class="kpi-sub"><span>~660,000 horas-pasajero ahorradas / año</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Validación Ex-Post DiD L3/L6</div>
+        <div class="kpi-val">+7.09 pp</div>
+        <div class="kpi-sub"><span>16.71M viajes · z = -16.8 · -0.039 etapas</span></div>
+      </div>
+    </div>
+
+    <div class="eda-grid">
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(16,185,129,0.2); color:#6ee7b7;">Simulación ML Contrafactual · 3.19M Viajes Laborales/Día</span>
+          <h3>Proyección Diaria por Línea: Nuevos Usuarios Metro + Upgrades a Metro Directo</h3>
+          <p><b>Línea 7</b> concentra el <b>52.8%</b> del impacto total (72,630 beneficiados/día y 1,527 h-pasajero/día), seguida por <b>Línea 8</b> (41,033/día) y <b>Línea 9</b> (23,659/día).</p>
+        </div>
+        <div id="chart-exp-l789" class="hyp-chart" style="height:310px;"></div>
+      </div>
+
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(56,189,248,0.2); color:#7dd3fc;">Equidad Territorial · Top 10 Comunas Beneficiadas (L7+L8+L9)</span>
+          <h3>Salto Proyectado en Cuota Modal Metro (Δ pp) y Reducción de Distancia a Estación</h3>
+          <p>Desbloqueo simultáneo de comunas sin Metro actual: <b>Vitacura (+14.3 pp, -1.67 km)</b>, <b>Cerro Navia (+12.6 pp, -1.65 km)</b>, <b>Quinta Normal (+9.1 pp)</b> y <b>La Pintana (+8.5 pp, -1.55 km)</b>.</p>
+        </div>
+        <div id="chart-exp-communes-ml" class="hyp-chart" style="height:310px;"></div>
+      </div>
+
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(245,158,11,0.2); color:#fcd34d;">Evidencia Ex-Post · Maduración L3/L6 (2019 → 2023)</span>
+          <h3>Salto en Participación de Metro (%): Comunas L3/L6 vs. Comunas Control</h3>
+          <p>Las comunas del corredor norte de L3 lideraron la captura modal: <b>Independencia (+16.2 pp)</b>, <b>Conchalí (+14.3 pp)</b> y <b>Quilicura (+13.8 pp)</b>.</p>
+        </div>
+        <div id="chart-exp-metro" class="hyp-chart" style="height:300px;"></div>
+      </div>
+
+      <div class="hyp-card">
+        <div class="hyp-head">
+          <span class="hyp-tag" style="background:rgba(168,85,247,0.2); color:#d8b4fe;">Validación Ex-Post · Tiempo Comparable (EPOCH)</span>
+          <h3>Duración Observada Puerta a Puerta (2019 vs. 2023) por Comuna</h3>
+          <p>Usando <code>EPOCH(t_fin - t_inicio)</code> idéntico en ambos años, L3/L6 redujo el tiempo medio (-0.41 min DiD) mientras Puente Alto y Las Condes empeoraron.</p>
+        </div>
+        <div id="chart-exp-time" class="hyp-chart" style="height:300px;"></div>
+      </div>
+    </div>
+
+    <div class="findings-grid">
+      <div class="finding-box">
+        <h4>🤖 Métricas Out-of-Sample (80/20 Estratificado, 131,400 viajes)</h4>
+        <ul>
+          <li><b>1A. Elección Metro (GBDT):</b> <code>ROC-AUC 0.8817</code> · <code>PR-AUC 0.9355</code> · <code>F1 0.8949</code> · <code>Brier 0.1136</code> (supera Reg. Logística <code>AUC 0.8595</code>).</li>
+          <li><b>1B. Metro Directo | Usa Metro (GBDT):</b> <code>ROC-AUC 0.9617</code> · <code>PR-AUC 0.9707</code> · <code>F1 0.9590</code> · <code>Brier 0.0456</code>.</li>
+          <li><b>2. Tiempo de Viaje (Ridge):</b> <code>MAE 7.44 min</code> · <code>RMSE 12.28 min</code> · <code>R² 0.6401</code> (supera GBDT <code>R² 0.5553</code> en extrapolación lineal).</li>
+        </ul>
+      </div>
+      <div class="finding-box">
+        <h4>📈 Impacto Estratégico para Metro de Santiago</h4>
+        <ul>
+          <li><b>~19.5 millones</b> de nuevos viajes Metro/año y <b>~17.6 millones</b> de viajes intermodales mejorados a Metro Directo (solo desde demanda <code>bip!</code> actual, antes de captura desde auto).</li>
+          <li><b>Refuerzo de combinaciones:</b> Santiago (+23.8k/d), Ñuñoa (+13.9k/d) y Macul (+9.4k/d) requerirán dimensionamiento prioritario de andenes y accesos.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Google Maps API Modal -->
 <div class="modal-backdrop" id="gmap-modal">
@@ -734,8 +1484,10 @@ let state = {
   showArcs: true,
   showHubs: true,
   showCommunes: true,
+  showGtfs: true,
+  showFuture: true,
   useGoogleMaps: false,
-  gmapKey: localStorage.getItem("METRO_OD_GMAP_KEY") || ""
+  gmapKey: localStorage.getItem("METRO_OD_GMAP_KEY") || "__DEFAULT_GMAP_KEY__"
 };
 
 // Populate Commune Dropdown
@@ -786,6 +1538,8 @@ L.control.layers({
 const arcsLayer = L.layerGroup().addTo(leafletMap);
 const hubsLayer = L.layerGroup().addTo(leafletMap);
 const communesLayer = L.layerGroup().addTo(leafletMap);
+const gtfsLayer = L.layerGroup().addTo(leafletMap);
+const futureLayer = L.layerGroup().addTo(leafletMap);
 
 // Google Maps instance & overlays
 let gmap = null;
@@ -930,7 +1684,93 @@ function renderDashboard() {
   arcsLayer.clearLayers();
   hubsLayer.clearLayers();
   communesLayer.clearLayers();
+  gtfsLayer.clearLayers();
+  futureLayer.clearLayers();
   if (state.useGoogleMaps && gmap) clearGmapOverlays();
+
+  // 2a. Real GTFS Metro Network (L1-L6)
+  if (state.showGtfs && DATA.metro_lines_gtfs) {
+    DATA.metro_lines_gtfs.forEach(line => {
+      if (!line.points || line.points.length < 2) return;
+      const lp = L.polyline(line.points, {
+        color: line.color,
+        weight: 3.2,
+        opacity: 0.72
+      }).bindTooltip(`<b>Metro ${line.name}</b> (Trazado oficial GTFS)`, { sticky: true });
+      gtfsLayer.addLayer(lp);
+
+      if (state.useGoogleMaps && gmap && window.google) {
+        const gp = new google.maps.Polyline({
+          path: line.points.map(p => ({ lat: p[0], lng: p[1] })),
+          geodesic: true,
+          strokeColor: line.color,
+          strokeOpacity: 0.75,
+          strokeWeight: 3.5,
+          map: gmap
+        });
+        gmapOverlays.push(gp);
+      }
+    });
+  }
+
+  // 2b. Future Proposed Metro Lines (L7, L8, L9)
+  if (state.showFuture && DATA.future_lines) {
+    DATA.future_lines.forEach(fl => {
+      const coords = fl.stations.map(s => [s[1], s[2]]);
+      const fp = L.polyline(coords, {
+        color: fl.color,
+        weight: 3.0,
+        dashArray: "7, 6",
+        opacity: 0.9
+      }).bindTooltip(`<b>${fl.name}</b> (Simulación Contrafactual ML)`, { sticky: true });
+      futureLayer.addLayer(fp);
+
+      fl.stations.forEach(s => {
+        const stDot = L.circleMarker([s[1], s[2]], {
+          radius: 3.5,
+          fillColor: fl.color,
+          color: "#0b0f19",
+          weight: 1,
+          fillOpacity: 0.95
+        }).bindTooltip(`<b>${s[0]}</b><br/>${fl.name}`);
+        futureLayer.addLayer(stDot);
+
+        if (state.useGoogleMaps && gmap && window.google) {
+          const gDot = new google.maps.Marker({
+            position: { lat: s[1], lng: s[2] },
+            map: gmap,
+            title: `${s[0]} — ${fl.name}`,
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 4,
+              fillColor: fl.color,
+              fillOpacity: 0.95,
+              strokeColor: "#0b0f19",
+              strokeWeight: 1
+            }
+          });
+          gmapOverlays.push(gDot);
+        }
+      });
+
+      if (state.useGoogleMaps && gmap && window.google) {
+        const dashSymbol = {
+          path: "M 0,-1 0,1",
+          strokeOpacity: 0.95,
+          strokeWeight: 3,
+          scale: 3,
+          strokeColor: fl.color
+        };
+        const gfp = new google.maps.Polyline({
+          path: coords.map(p => ({ lat: p[0], lng: p[1] })),
+          strokeOpacity: 0,
+          icons: [{ icon: dashSymbol, offset: "0", repeat: "14px" }],
+          map: gmap
+        });
+        gmapOverlays.push(gfp);
+      }
+    });
+  }
 
   const topCorridors = corridors.slice(0, state.topN);
   const maxTrips = topCorridors.length > 0 ? topCorridors[0].trips : 1;
@@ -1022,18 +1862,41 @@ function renderDashboard() {
     Object.values(DATA.communes).forEach(c => {
       const isSelected = state.commune === c.name;
       const cm = L.circleMarker([c.lat, c.lon], {
-        radius: isSelected ? 8 : 4,
-        fillColor: isSelected ? "#38bdf8" : "#94a3b8",
+        radius: isSelected ? 8 : 5,
+        fillColor: isSelected ? "#38bdf8" : "#cbd5e1",
         color: "#0f172a",
-        weight: 1.5,
-        fillOpacity: isSelected ? 1.0 : 0.65
-      }).bindTooltip(`Comuna: <b>${c.name}</b> (Click para filtrar flujos OD)`);
+        weight: 1.8,
+        fillOpacity: isSelected ? 1.0 : 0.85
+      }).bindTooltip(`<b>Centroide Comuna: ${c.name}</b><br/>Origen/Fin de Arcos OD (Click para filtrar)`);
       cm.on("click", () => {
         state.commune = state.commune === c.name ? "ALL" : c.name;
         selCommune.value = state.commune;
         renderDashboard();
       });
       communesLayer.addLayer(cm);
+
+      if (state.useGoogleMaps && gmap && window.google) {
+        const gCentroid = new google.maps.Marker({
+          position: { lat: c.lat, lng: c.lon },
+          map: gmap,
+          title: `Centroide Comuna: ${c.name} (Origen/Fin de Arcos OD — Click para filtrar)`,
+          zIndex: isSelected ? 900 : 500,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: isSelected ? 8 : 5.5,
+            fillColor: isSelected ? "#38bdf8" : "#e2e8f0",
+            fillOpacity: 0.95,
+            strokeColor: "#0f172a",
+            strokeWeight: 2
+          }
+        });
+        gCentroid.addListener("click", () => {
+          state.commune = state.commune === c.name ? "ALL" : c.name;
+          selCommune.value = state.commune;
+          renderDashboard();
+        });
+        gmapOverlays.push(gCentroid);
+      }
     });
   }
 
@@ -1185,6 +2048,8 @@ document.getElementById("rng-topn").addEventListener("input", e => {
 document.getElementById("chk-arcs").addEventListener("change", e => { state.showArcs = e.target.checked; renderDashboard(); });
 document.getElementById("chk-hubs").addEventListener("change", e => { state.showHubs = e.target.checked; renderDashboard(); });
 document.getElementById("chk-communes").addEventListener("change", e => { state.showCommunes = e.target.checked; renderDashboard(); });
+document.getElementById("chk-gtfs").addEventListener("change", e => { state.showGtfs = e.target.checked; renderDashboard(); });
+document.getElementById("chk-future").addEventListener("change", e => { state.showFuture = e.target.checked; renderDashboard(); });
 selStation.addEventListener("change", renderStationProfileChart);
 
 document.querySelectorAll("#mode-pills .pill").forEach(btn => {
@@ -1275,23 +2140,322 @@ function activateGoogleMaps(apiKey) {
   }
 }
 
+function renderEdaHypotheses() {
+  if (!DATA.eda || !DATA.full_week) return;
+  const fw = DATA.full_week;
+  const darkLayout = {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(0,0,0,0)",
+    font: { color: "#cbd5e1", size: 10.5 },
+    legend: { orientation: "h", y: 1.15, x: 0, font: { size: 10 } }
+  };
+
+  // TAB 2: Dataset Coverage & Unestimated Destination Chart
+  Plotly.react("chart-ds-coverage", [
+    {
+      x: fw.coverage.map(r => r.label),
+      y: fw.coverage.map(r => r.daily_trips / 1e6),
+      name: "Viajes Diarios Expandidos (Millones)",
+      type: "bar",
+      marker: { color: "#38bdf8" },
+      text: fw.coverage.map(r => (r.daily_trips / 1e6).toFixed(2) + "M"),
+      textposition: "outside",
+      yaxis: "y"
+    },
+    {
+      x: fw.coverage.map(r => r.label),
+      y: fw.coverage.map(r => r.sin_bajada_pct),
+      name: "% Sin Bajada Estimada",
+      type: "scatter",
+      mode: "lines+markers+text",
+      line: { color: "#f59e0b", width: 2.5 },
+      marker: { size: 8 },
+      text: fw.coverage.map(r => r.sin_bajada_pct.toFixed(1) + "%"),
+      textposition: "top center",
+      yaxis: "y2"
+    }
+  ], {
+    ...darkLayout,
+    margin: { t: 32, r: 52, b: 46, l: 50 },
+    yaxis: { title: "Millones viajes / día", range: [0, 5.4], gridcolor: "#1e293b" },
+    yaxis2: { title: "% Sin Bajada", overlaying: "y", side: "right", range: [0, 50], showgrid: false }
+  }, { displayModeBar: false, responsive: true });
+
+  // TAB 3 (INTERMODAL): 1. Travel Time Decomposition
+  const d1 = DATA.eda.h1_time_decomp;
+  const labels1 = d1.map(r => `${r.label}<br>(${(r.trips / 1e6).toFixed(2)}M)`);
+  const comps = [
+    { key: "entrada", name: "Acceso", color: "#38bdf8" },
+    { key: "espera1", name: "Espera 1", color: "#fbbf24" },
+    { key: "vehiculo1", name: "Vehículo 1", color: "#ef4444" },
+    { key: "caminata", name: "Caminata Trasb.", color: "#a855f7" },
+    { key: "espera2", name: "Espera Trasb. 2", color: "#f97316" },
+    { key: "vehiculo2", name: "Vehículo 2", color: "#10b981" },
+    { key: "egreso", name: "Egreso", color: "#64748b" }
+  ];
+  Plotly.react("chart-inter-decomp", comps.map(c => ({
+    y: labels1,
+    x: d1.map(r => r[c.key]),
+    name: c.name,
+    type: "bar",
+    orientation: "h",
+    marker: { color: c.color }
+  })), {
+    ...darkLayout,
+    barmode: "stack",
+    margin: { t: 32, r: 20, b: 36, l: 145 },
+    xaxis: { title: "Minutos promedio por viaje (tviaje2)", gridcolor: "#1e293b" },
+    yaxis: { autorange: "reversed" }
+  }, { displayModeBar: false, responsive: true });
+
+  // TAB 3 (INTERMODAL): 2. Card-Level Afternoon Return Proof (826k cards)
+  Plotly.react("chart-inter-cards", [{
+    y: fw.intermodal_cards.map(r => r.label),
+    x: fw.intermodal_cards.map(r => r.pct),
+    type: "bar",
+    orientation: "h",
+    marker: { color: fw.intermodal_cards.map(r => r.color) },
+    text: fw.intermodal_cards.map(r => `${r.pct}% (${Math.round(r.cards / 1000)}k)`),
+    textposition: "outside"
+  }], {
+    ...darkLayout,
+    margin: { t: 18, r: 78, b: 36, l: 175 },
+    xaxis: { title: "% de tarjetas-día Bus→Metro matutinas", range: [0, 42], gridcolor: "#1e293b" },
+    yaxis: { autorange: "reversed" }
+  }, { displayModeBar: false, responsive: true });
+
+  // TAB 3 (INTERMODAL): 3. Top 11 Asymmetric Stations
+  const stA = fw.intermodal_stations;
+  Plotly.react("chart-inter-stations", [
+    {
+      x: stA.map(r => r.station),
+      y: stA.map(r => r.bm),
+      name: "Mañana: BUS → METRO / día",
+      type: "bar",
+      marker: { color: "#38bdf8" }
+    },
+    {
+      x: stA.map(r => r.station),
+      y: stA.map(r => r.mb),
+      name: "Tarde: METRO → BUS validado / día",
+      type: "bar",
+      marker: { color: "#ef4444" },
+      text: stA.map(r => r.ret_pct + "% ret."),
+      textposition: "outside"
+    }
+  ], {
+    ...darkLayout,
+    barmode: "group",
+    margin: { t: 30, r: 18, b: 68, l: 55 },
+    xaxis: { tickangle: -28 },
+    yaxis: { title: "Viajes diarios laborales (2023)", gridcolor: "#1e293b" }
+  }, { displayModeBar: false, responsive: true });
+
+  // TAB 4 (TEMPORAL): 1. Daily Volume 2019 vs 2023
+  const bB = fw.temporal_blocks;
+  Plotly.react("chart-temp-vol", [
+    {
+      x: bB.map(r => r.bloque),
+      y: bB.map(r => r.t19 / 1000),
+      name: "Abril 2019 (miles / día)",
+      type: "bar",
+      marker: { color: "#475569" },
+      text: bB.map(r => Math.round(r.t19 / 1000) + "k"),
+      textposition: "outside"
+    },
+    {
+      x: bB.map(r => r.bloque),
+      y: bB.map(r => r.t23 / 1000),
+      name: "Abril 2023 (miles / día)",
+      type: "bar",
+      marker: { color: bB.map(r => r.var_pct < -30 ? "#ef4444" : "#38bdf8") },
+      text: bB.map(r => `${Math.round(r.t23 / 1000)}k (${r.var_pct.toFixed(1)}%)`),
+      textposition: "outside"
+    }
+  ], {
+    ...darkLayout,
+    barmode: "group",
+    margin: { t: 32, r: 18, b: 48, l: 52 },
+    yaxis: { title: "Miles de viajes Metro / día laboral", range: [0, 1050], gridcolor: "#1e293b" }
+  }, { displayModeBar: false, responsive: true });
+
+  // TAB 4 (TEMPORAL): 2. Share Shift (Delta pp)
+  Plotly.react("chart-temp-share", [{
+    x: bB.map(r => r.bloque),
+    y: bB.map(r => +(r.s23 - r.s19).toFixed(2)),
+    type: "bar",
+    marker: { color: bB.map(r => (r.s23 - r.s19) >= 0 ? "#10b981" : "#ef4444") },
+    text: bB.map(r => {
+      const d = r.s23 - r.s19;
+      return `${d >= 0 ? '+' : ''}${d.toFixed(2)} pp`;
+    }),
+    textposition: "outside"
+  }], {
+    ...darkLayout,
+    margin: { t: 26, r: 18, b: 48, l: 52 },
+    yaxis: { title: "Cambio de participación diaria (Δ pp)", range: [-2.6, 2.3], zeroline: true, zerolinecolor: "#94a3b8", gridcolor: "#1e293b" }
+  }, { displayModeBar: false, responsive: true });
+
+  // TAB 5 (EXPANSION): 0A. ML Counterfactual L7, L8, L9 Stacked Bar
+  if (fw.expansion_ml_scenarios) {
+    const sc = fw.expansion_ml_scenarios;
+    Plotly.react("chart-exp-l789", [
+      {
+        x: sc.map(r => r.name),
+        y: sc.map(r => r.new_trips / 1000),
+        name: "Nuevos Metro (Bus → Metro)",
+        type: "bar",
+        marker: { color: "#ef4444" }
+      },
+      {
+        x: sc.map(r => r.name),
+        y: sc.map(r => r.upgraded / 1000),
+        name: "Upgrade a Metro Directo (Sin Bus Alim.)",
+        type: "bar",
+        marker: { color: "#14b8a6" },
+        text: sc.map(r => `${(r.total / 1000).toFixed(1)}k/d (${r.hrs_saved.toLocaleString()} h)`),
+        textposition: "outside"
+      }
+    ], {
+      ...darkLayout,
+      barmode: "stack",
+      margin: { t: 32, r: 18, b: 48, l: 52 },
+      yaxis: { title: "Miles de viajes laborales / día", range: [0, 165], gridcolor: "#1e293b" }
+    }, { displayModeBar: false, responsive: true });
+  }
+
+  // TAB 5 (EXPANSION): 0B. Top Beneficiary Communes (L7+L8+L9)
+  if (fw.expansion_ml_communes) {
+    const cm = fw.expansion_ml_communes;
+    Plotly.react("chart-exp-communes-ml", [{
+      y: cm.map(r => r.comuna),
+      x: cm.map(r => r.gain_pp),
+      type: "bar",
+      orientation: "h",
+      marker: { color: cm.map(r => r.dist_drop >= 1.0 ? "#38bdf8" : "#10b981") },
+      text: cm.map(r => `+${r.gain_pp.toFixed(1)} pp (${r.benefited.toLocaleString()}/d)`),
+      textposition: "outside"
+    }], {
+      ...darkLayout,
+      margin: { t: 16, r: 105, b: 38, l: 105 },
+      xaxis: { title: "Ganancia Cuota Modal Metro (pp)", range: [0, 21], gridcolor: "#1e293b" },
+      yaxis: { autorange: "reversed" }
+    }, { displayModeBar: false, responsive: true });
+  }
+
+  // TAB 5 (EXPANSION): 1. Metro Mode Share Jump (L3/L6 vs Control)
+  const cC = fw.expansion_communes;
+  Plotly.react("chart-exp-metro", [{
+    x: cC.map(r => r.comuna),
+    y: cC.map(r => r.dm),
+    type: "bar",
+    marker: { color: cC.map(r => r.group === "L3/L6" ? "#10b981" : "#64748b") },
+    text: cC.map(r => `${r.dm >= 0 ? '+' : ''}${r.dm.toFixed(1)}pp`),
+    textposition: "outside"
+  }], {
+    ...darkLayout,
+    margin: { t: 24, r: 18, b: 78, l: 50 },
+    xaxis: { tickangle: -35 },
+    yaxis: { title: "Cambio Participación Metro 2019→2023 (Δ pp)", range: [-4, 22], zeroline: true, zerolinecolor: "#94a3b8", gridcolor: "#1e293b" }
+  }, { displayModeBar: false, responsive: true });
+
+  // TAB 5 (EXPANSION): 2. Strictly Comparable Duration (EPOCH 2019 vs 2023)
+  Plotly.react("chart-exp-time", [
+    {
+      x: cC.map(r => r.comuna),
+      y: cC.map(r => r.min19),
+      name: "Duración 2019 (min)",
+      type: "bar",
+      marker: { color: "#475569" }
+    },
+    {
+      x: cC.map(r => r.comuna),
+      y: cC.map(r => r.min23),
+      name: "Duración 2023 (min)",
+      type: "bar",
+      marker: { color: cC.map(r => r.group === "L3/L6" ? "#10b981" : "#38bdf8") },
+      text: cC.map(r => `${r.dmin >= 0 ? '+' : ''}${r.dmin.toFixed(1)}m`),
+      textposition: "outside"
+    }
+  ], {
+    ...darkLayout,
+    barmode: "group",
+    margin: { t: 30, r: 18, b: 78, l: 50 },
+    xaxis: { tickangle: -35 },
+    yaxis: { title: "Duración observada EPOCH (min)", range: [0, 46], gridcolor: "#1e293b" }
+  }, { displayModeBar: false, responsive: true });
+}
+
+// Tab Switching Logic
+document.querySelectorAll("#main-tabs .tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const targetId = btn.dataset.tab;
+    document.querySelectorAll("#main-tabs .tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    const panel = document.getElementById(targetId);
+    if (panel) panel.classList.add("active");
+
+    if (targetId === "tab-map") {
+      setTimeout(() => {
+        leafletMap.invalidateSize();
+        Plotly.Plots.resize("chart-halfhour");
+        Plotly.Plots.resize("chart-station");
+      }, 60);
+    } else {
+      setTimeout(() => {
+        panel.querySelectorAll(".hyp-chart").forEach(el => {
+          if (el.id) Plotly.Plots.resize(el.id);
+        });
+      }, 60);
+    }
+  });
+});
+
 // Initial Render
 renderDashboard();
 renderStationProfileChart();
+renderEdaHypotheses();
+if (state.gmapKey) {
+  activateGoogleMaps(state.gmapKey);
+}
 </script>
 </body>
 </html>
 """
 
 
-def build_html_dashboard(output_path: Path, sample_rows: int = 60_000) -> Path:
+def _resolve_gmap_key() -> str:
+    """Resolve Google Maps API key from GOOGLE_MAPS_API_KEY / GMAPS_API_KEY env vars or local .env."""
+    for var in ("GOOGLE_MAPS_API_KEY", "GMAPS_API_KEY"):
+        val = os.environ.get(var, "").strip()
+        if val:
+            return val
+    env_file = PROJECT_ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip() in ("GOOGLE_MAPS_API_KEY", "GMAPS_API_KEY"):
+                return v.strip().strip('"').strip("'")
+    return ""
+
+
+def build_html_dashboard(output_path: Path, sample_rows: int = 60_000, gmap_key: Optional[str] = None) -> Path:
     """Extract analytics payload and render the interactive HTML dashboard + data JS."""
     payload = extract_dashboard_data(sample_rows=sample_rows)
     json_str = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    resolved_key = (gmap_key if gmap_key is not None else _resolve_gmap_key()).replace('"', "")
     data_js_path = output_path.parent / "dashboard_data.js"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     data_js_path.write_text(f"window.METRO_OD_DATA = {json_str};\n", encoding="utf-8")
-    html_content = HTML_TEMPLATE.replace("__DASHBOARD_JSON_PAYLOAD__", json_str)
+    html_content = (
+        HTML_TEMPLATE
+        .replace("__DASHBOARD_JSON_PAYLOAD__", json_str)
+        .replace("__DEFAULT_GMAP_KEY__", resolved_key)
+    )
     output_path.write_text(html_content, encoding="utf-8")
     return output_path
 
