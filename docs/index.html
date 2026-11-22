@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Metro de Santiago · Análisis Origen–Destino y Simulación ML (2019–2023)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script src="./config.js" onerror="window.METRO_GMAP_KEY = window.METRO_GMAP_KEY || '';"></script>
+  <script src="./dashboard_data.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true">M</div>
+    <div class="brand-text">
+      <div class="brand-title">Metro de Santiago · Analítica Origen–Destino</div>
+      <div class="brand-sub">ADATRAP Abril 2019 vs. Abril 2023 · 44,43M viajes bip! · 792 zonas DTPM · 126 estaciones GTFS</div>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn" id="btn-reset" type="button">Restablecer</button>
+  </div>
+</header>
+
+<nav class="tabs" id="main-tabs" role="tablist">
+  <button class="tab-btn active" data-tab="tab-map" role="tab">Red y Flujos OD</button>
+  <button class="tab-btn" data-tab="tab-expansion" role="tab">Expansión L7–L9 (ML)</button>
+  <button class="tab-btn" data-tab="tab-intermodal" role="tab">Intermodalidad PM</button>
+  <button class="tab-btn" data-tab="tab-temporal" role="tab">Demanda Horaria</button>
+  <button class="tab-btn" data-tab="tab-dataset" role="tab">Datos y Metodología</button>
+</nav>
+
+<!-- ==================== TAB 1: RED Y FLUJOS OD ==================== -->
+<section id="tab-map" class="tab-panel active">
+  <div class="container">
+    <div class="toolbar">
+      <div class="field">
+        <label for="sel-year">Semana</label>
+        <select id="sel-year">
+          <option value="2023" selected>Abril 2023 (17–23)</option>
+          <option value="2019">Abril 2019 (08–14)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Modo inicial</label>
+        <div class="segmented" id="mode-pills">
+          <button class="seg-btn active" data-mode="ALL" type="button">Todos</button>
+          <button class="seg-btn" data-mode="METRO" type="button">Metro</button>
+          <button class="seg-btn" data-mode="BUS" type="button">Bus</button>
+          <button class="seg-btn" data-mode="ZONA PAGA" type="button">Zona Paga</button>
+          <button class="seg-btn" data-mode="METROTREN" type="button">Metrotren</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="sel-period">Bloque horario</label>
+        <select id="sel-period">
+          <option value="ALL" selected>Día completo</option>
+          <option value="PUNTA_MANANA">Punta Mañana (06:00–09:30)</option>
+          <option value="FUERA_PUNTA">Fuera de Punta (09:30–17:30)</option>
+          <option value="PUNTA_TARDE">Punta Tarde (17:30–21:00)</option>
+          <option value="NOCTURNO">Nocturno (21:00–06:00)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="sel-purpose">Propósito</label>
+        <select id="sel-purpose">
+          <option value="ALL" selected>Todos</option>
+          <option value="TRABAJO">Trabajo</option>
+          <option value="ESTUDIO">Estudio</option>
+          <option value="HOGAR">Hogar</option>
+          <option value="OTROS">Otros</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="sel-commune">Comuna</label>
+        <select id="sel-commune">
+          <option value="ALL" selected>Todas las comunas (34)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="sel-direction">Sentido</label>
+        <select id="sel-direction">
+          <option value="BOTH" selected>Origen y destino</option>
+          <option value="ORIGIN">Solo salidas</option>
+          <option value="DEST">Solo llegadas</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="rng-topn">Arcos visibles: <span id="lbl-topn" class="num">35</span></label>
+        <input type="range" id="rng-topn" min="10" max="100" step="5" value="35" />
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-label">Viajes expandidos (muestra filtrada)</div>
+        <div class="kpi-value" id="kpi-trips">—</div>
+        <div class="kpi-meta">
+          <span id="kpi-trips-vs">vs. año base: —</span>
+          <span id="kpi-intermodal">Intermodal: —%</span>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Tiempo de viaje promedio</div>
+        <div class="kpi-value" id="kpi-time">—</div>
+        <div class="kpi-meta">
+          <span id="kpi-time-vs">Comparativo: —</span>
+          <span id="kpi-stages">Etapas: —</span>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Distancia promedio en ruta</div>
+        <div class="kpi-value" id="kpi-dist">—</div>
+        <div class="kpi-meta">
+          <span id="kpi-dist-vs">Comparativo: —</span>
+          <span id="kpi-speed">Vel. media: —</span>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Corredor principal</div>
+        <div class="kpi-value" id="kpi-top-od" style="font-size:15px; line-height:1.45;">—</div>
+        <div class="kpi-meta">
+          <span id="kpi-dom-mode">Modo: —</span>
+          <span id="kpi-hub-top">Nodo: —</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-map">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Red Ferroviaria y Flujos Origen–Destino por Comuna</div>
+            <div class="panel-sub">Arcos curvos conectan centroides comunales; trazados sólidos muestran GTFS L1–L6 y punteados L7–L9</div>
+          </div>
+          <div class="layer-toggles">
+            <label><input type="checkbox" id="chk-gtfs" checked /> L1–L6 (GTFS)</label>
+            <label><input type="checkbox" id="chk-future" checked /> Futuras L7–L9</label>
+            <label><input type="checkbox" id="chk-arcs" checked /> Arcos OD</label>
+            <label><input type="checkbox" id="chk-communes" checked /> Centroides</label>
+            <label><input type="checkbox" id="chk-hubs" checked /> Nodos</label>
+          </div>
+        </div>
+        <div id="map-wrap">
+          <div id="leaflet-map"></div>
+          <div id="gmap-canvas"></div>
+          <div class="map-legend">
+            <div class="legend-title">Capas</div>
+            <div class="legend-item"><span class="swatch-dot" style="background:var(--metro);"></span> Metro (estaciones y flujos)</div>
+            <div class="legend-item"><span class="swatch-dot" style="background:var(--bus);"></span> Bus Red (paraderos y flujos)</div>
+            <div class="legend-item"><span class="swatch-dot" style="background:var(--zp);"></span> Zona Paga</div>
+            <div class="legend-item"><span class="swatch-dot" style="background:#0f172a; border:2px solid #94a3b8;"></span> Centroide comunal (ancla OD)</div>
+            <div class="legend-item"><span class="swatch-dash"></span> Trazados proyectados L7, L8 y L9</div>
+          </div>
+        </div>
+        <div class="summary-strip">
+          <div class="summary-strip-title">Resumen de la selección actual</div>
+          <ul class="summary-list" id="selection-summary"></ul>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Perfil de demanda por media hora</div>
+              <div class="panel-sub">Línea sólida: 2023 · Línea punteada: 2019</div>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="chart-halfhour" class="chart-sm"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Subidas por estación (2019 vs. 2023)</div>
+              <div class="panel-sub">Promedio día laboral · Matriz ADATRAP por media hora</div>
+            </div>
+            <select id="sel-station-profile"></select>
+          </div>
+          <div class="panel-body">
+            <div id="chart-station" class="chart-sm" style="height:215px;"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">Principales corredores Origen–Destino</div>
+            <span id="tbl-count" class="panel-sub num"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Origen → Destino</th>
+                  <th>Modo</th>
+                  <th class="num">Viajes</th>
+                  <th class="num">Intermodal</th>
+                  <th class="num">Tiempo</th>
+                  <th class="num">Distancia</th>
+                </tr>
+              </thead>
+              <tbody id="od-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== TAB 2: EXPANSIÓN L7-L9 (ML) ==================== -->
+<section id="tab-expansion" class="tab-panel">
+  <div class="container">
+    <div class="section-header">
+      <div>
+        <div class="section-kicker">Tesis Principal · Expansión de Red</div>
+        <h1 class="section-title">Impacto Causal de Líneas 3–6 y Predicción ML Espacial de Líneas 7, 8 y 9</h1>
+        <p class="section-desc">Validación ex-post mediante Diferencias-en-Diferencias sobre 16,71M viajes laborales (2019→2023) y simulación contrafactual sobre 3,19M viajes laborales/día (792 zonas DTPM × 126 estaciones GTFS) estimando captura modal y eliminación de bus alimentador.</p>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-label">Viajes beneficiados (L7 + L8 + L9)</div>
+        <div class="kpi-value">137.447 / día</div>
+        <div class="kpi-meta"><span>+72.184 nuevos Metro + 65.263 directos</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">ROC-AUC GBDT espacial (Holdout 20%)</div>
+        <div class="kpi-value">0,882 / 0,962</div>
+        <div class="kpi-meta"><span>Elección Metro / Metro Directo</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Ahorro social de tiempo</div>
+        <div class="kpi-value">2.445 h / día</div>
+        <div class="kpi-meta"><span>~660.000 horas-pasajero / año</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Efecto DiD ex-post L3/L6 (2019→2023)</div>
+        <div class="kpi-value">+7,09 pp</div>
+        <div class="kpi-meta"><span>z = −16,8 · −0,039 etapas/viaje</span></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Impacto contrafactual por línea proyectada</div>
+            <div class="panel-sub">Descomposición entre nuevos usuarios (Bus → Metro) y upgrades a Metro Directo (sin bus alimentador)</div>
+          </div>
+        </div>
+        <div class="panel-body"><div id="chart-exp-l789" class="chart"></div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Comunas con mayor ganancia de cuota modal (L7 + L8 + L9)</div>
+            <div class="panel-sub">Azul destaca comunas con reducción promedio mayor a 1,0 km hasta la estación más cercana</div>
+          </div>
+        </div>
+        <div class="panel-body"><div id="chart-exp-communes-ml" class="chart"></div></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Validación Out-of-Sample de Modelos ML (80/20 estratificado · 131.400 viajes laborales)</div>
+          <div class="panel-sub">GBDT captura umbrales no lineales de caminata a estación; Ridge generaliza mejor la relación lineal distancia → duración</div>
+        </div>
+      </div>
+      <div class="table-wrap" style="max-height:none;">
+        <table>
+          <thead>
+            <tr>
+              <th>Tarea predictiva</th>
+              <th>Modelo</th>
+              <th class="num">ROC-AUC</th>
+              <th class="num">PR-AUC</th>
+              <th class="num">F1</th>
+              <th class="num">Brier</th>
+              <th class="num">MAE / R²</th>
+              <th>Selección</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1A. Elección de Metro (P(usa_metro))</td>
+              <td>Regresión Logística L2</td>
+              <td class="num">0,8595</td>
+              <td class="num">0,9284</td>
+              <td class="num">0,8880</td>
+              <td class="num">0,1247</td>
+              <td class="num">—</td>
+              <td><span class="tag tag-base">Baseline</span></td>
+            </tr>
+            <tr>
+              <td><strong>1A. Elección de Metro (P(usa_metro))</strong></td>
+              <td><strong>Histogram GBDT</strong></td>
+              <td class="num"><strong>0,8817</strong></td>
+              <td class="num"><strong>0,9355</strong></td>
+              <td class="num"><strong>0,8949</strong></td>
+              <td class="num"><strong>0,1136</strong></td>
+              <td class="num">—</td>
+              <td><span class="tag tag-win">Seleccionado</span></td>
+            </tr>
+            <tr>
+              <td><strong>1B. Metro Directo | Usa Metro</strong></td>
+              <td><strong>Histogram GBDT</strong></td>
+              <td class="num"><strong>0,9617</strong></td>
+              <td class="num"><strong>0,9707</strong></td>
+              <td class="num"><strong>0,9590</strong></td>
+              <td class="num"><strong>0,0456</strong></td>
+              <td class="num">—</td>
+              <td><span class="tag tag-win">Seleccionado</span></td>
+            </tr>
+            <tr>
+              <td><strong>2. Tiempo de viaje (duracion_obs_min)</strong></td>
+              <td><strong>Ridge Regression</strong></td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num"><strong>7,44 min / 0,6401</strong></td>
+              <td><span class="tag tag-win">Seleccionado</span></td>
+            </tr>
+            <tr>
+              <td>2. Tiempo de viaje (duracion_obs_min)</td>
+              <td>Histogram GBDT</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">9,21 min / 0,5553</td>
+              <td><span class="tag tag-base">Benchmark</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Validación ex-post L3/L6: salto en cuota modal Metro (2019→2023)</div>
+            <div class="panel-sub">6 comunas tratadas (rojo) vs. 8 comunas control (gris) sobre 16,71M viajes laborales</div>
+          </div>
+        </div>
+        <div class="panel-body"><div id="chart-exp-metro" class="chart"></div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Validación ex-post L3/L6: duración observada puerta a puerta</div>
+            <div class="panel-sub">Cálculo estrictamente comparable mediante EPOCH(tiempo_fin - tiempo_inicio) / 60</div>
+          </div>
+        </div>
+        <div class="panel-body"><div id="chart-exp-time" class="chart"></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== TAB 3: INTERMODALIDAD PM ==================== -->
+<section id="tab-intermodal" class="tab-panel">
+  <div class="container">
+    <div class="section-header">
+      <div>
+        <div class="section-kicker">Hallazgo Complementario · Intermodalidad PM</div>
+        <h1 class="section-title">Asimetría Intermodal de Retorno PM y Sesgo de Observabilidad en ADATRAP</h1>
+        <p class="section-desc">El 67,7% de las tarjetas bip! que validan Bus → Metro en la mañana regresan en la tarde validando solo Metro. El tiempo de espera del bus alimentador PM en estación es el predictor principal (Odds Ratio = 1,389 por DE; z = +46,51).</p>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-label">Asimetría laboral 2023</div>
+        <div class="kpi-value">2,58×</div>
+        <div class="kpi-meta"><span>318,8k Bus→Metro vs. 123,8k Metro→Bus</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Retorno Solo Metro (156,8k tarjetas)</div>
+        <div class="kpi-value">67,67%</div>
+        <div class="kpi-meta"><span>GBDT ROC-AUC 0,628 · PR-AUC 0,763</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Espera de trasbordo (te1)</div>
+        <div class="kpi-value">7,70 min</div>
+        <div class="kpi-meta"><span>+144% frente a 3,15 min en Bus→Metro</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Contrafactual (−50% espera bus PM)</div>
+        <div class="kpi-value">−14,6 pp</div>
+        <div class="kpi-meta"><span>Reducción de no-validación (GBDT)</span></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Descomposición de tiempo de viaje (10,75M viajes 2023)</div>
+            <div class="panel-sub">Componentes de acceso, espera, vehículo, caminata de trasbordo y egreso</div>
+          </div>
+        </div>
+        <div class="panel-body"><div id="chart-inter-decomp" class="chart"></div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Seguimiento longitudinal por id_tarjeta (826.099 tarjetas-día)</div>
+            <div class="panel-sub">Modo registrado en la tarde por usuarios que ingresaron en Bus → Metro durante la mañana</div>
+          </div>
+        </div>
+        <div class="panel-body"><div id="chart-inter-cards" class="chart"></div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Estaciones terminales con mayor brecha diaria de retorno intermodal</div>
+          <div class="panel-sub">Comparación entre viajes matutinos Bus → Metro y retornos validados Metro → Bus (porcentaje indica tasa de retorno validado)</div>
+        </div>
+      </div>
+      <div class="panel-body"><div id="chart-inter-stations" class="chart-lg"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== TAB 4: DEMANDA HORARIA ==================== -->
+<section id="tab-temporal" class="tab-panel">
+  <div class="container">
+    <div class="section-header">
+      <div>
+        <div class="section-kicker">Hallazgo Complementario · Demanda Horaria</div>
+        <h1 class="section-title">Contracción Nocturna (−43,7%) e Inversión del Viernes Híbrido (2019 vs. 2023)</h1>
+        <p class="section-desc">La recuperación post-pandemia no fue homogénea: la franja nocturna (20:00–24:00) perdió 106.037 viajes diarios y el viernes pasó de ser el día de mayor demanda en 2019 (2,31M) al día laboral más bajo en 2023 (1,71M).</p>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-label">Demanda laboral Metro (promedio)</div>
+        <div class="kpi-value">1,73 M / día</div>
+        <div class="kpi-meta"><span class="delta neg">−23,7%</span><span>vs. 2,27M en Abril 2019</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Bloque Nocturno (20:00–24:00)</div>
+        <div class="kpi-value">−43,65%</div>
+        <div class="kpi-meta"><span>−106.037 viajes/día · OTROS −64,1%</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Inversión del Viernes</div>
+        <div class="kpi-value">−26,14%</div>
+        <div class="kpi-meta"><span>De #1 (2,31M) a mínimo laboral (1,71M)</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Punta Mañana (06:00–09:00)</div>
+        <div class="kpi-value">−14,46%</div>
+        <div class="kpi-meta"><span class="delta pos">+2,51 pp</span><span>cuota diaria (20,7% → 23,2%)</span></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Volumen diario Metro por bloque horario (2019 vs. 2023)</div>
+            <div class="panel-sub">Promedio de 5 días laborales completos (miles de viajes expandidos)</div>
+          </div>
+        </div>
+        <div class="panel-body"><div id="chart-temp-vol" class="chart"></div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Inversión semanal por trabajo híbrido (Lunes a Domingo)</div>
+            <div class="panel-sub">Viajes totales Metro por día de la semana (Abril 2019 vs. Abril 2023)</div>
+          </div>
+        </div>
+        <div class="panel-body"><div id="chart-temp-dow" class="chart"></div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Redistribución de participación diaria por franja horaria (Δ pp)</div>
+          <div class="panel-sub">Ganancia de concentración en Punta Mañana y Valle frente a contracción nocturna</div>
+        </div>
+      </div>
+      <div class="panel-body"><div id="chart-temp-share" class="chart-sm"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== TAB 5: DATOS Y METODOLOGÍA ==================== -->
+<section id="tab-dataset" class="tab-panel">
+  <div class="container">
+    <div class="section-header">
+      <div>
+        <div class="section-kicker">Ingeniería de Datos · Procesamiento Out-of-Core</div>
+        <h1 class="section-title">Arquitectura ADATRAP, Auditoría de Cobertura y Supuestos Metodológicos</h1>
+        <p class="section-desc">Procesamiento directo sobre disco con DuckDB y Polars (~20,7 GB en 26 archivos) sin muestreo para métricas poblacionales, logrando paridad exacta de 7 días en Abril 2019 (25,84M viajes) y Abril 2023 (18,60M viajes).</p>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Cobertura poblacional y tasa de viajes sin bajada estimada</div>
+            <div class="panel-sub">Viajes diarios expandidos (millones) y porcentaje con ultimaetapaconbajada = 0</div>
+          </div>
+        </div>
+        <div class="panel-body"><div id="chart-ds-coverage" class="chart"></div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Inventario de fuentes armonizadas</div>
+            <div class="panel-sub">Homologación de delimitadores, codificaciones, CRS y esquemas</div>
+          </div>
+        </div>
+        <div class="table-wrap" style="max-height:318px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Fuente</th>
+                <th>Año</th>
+                <th>Volumen</th>
+                <th>Tratamiento aplicado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono">viajes201904*.csv (7 archivos)</td>
+                <td>2019</td>
+                <td class="num">25,84M filas</td>
+                <td>Extracción de 6 .rar faltantes; normalización comunas truncadas</td>
+              </tr>
+              <tr>
+                <td class="mono">etapas201904*.csv (7 archivos)</td>
+                <td>2019</td>
+                <td class="num">~35M filas</td>
+                <td>Coordenadas UTM 19S; nulos estandarizados desde '-'</td>
+              </tr>
+              <tr>
+                <td class="mono">viajes_042023_17al23.csv</td>
+                <td>2023</td>
+                <td class="num">18,60M filas</td>
+                <td>Decodificación de 34 comunas y 12 períodos vía etapas_2023</td>
+              </tr>
+              <tr>
+                <td class="mono">etapas_042023_17al23.csv</td>
+                <td>2023</td>
+                <td class="num">9,41 GB</td>
+                <td>UTF-8 BOM; separación CRS mixto UTM 19S (Bus) vs. WGS84 (Metro)</td>
+              </tr>
+              <tr>
+                <td class="mono">Matriz_sub/baj_SS_MH.xlsb</td>
+                <td>2023</td>
+                <td class="num">13,6 MB</td>
+                <td>Lectura binaria fastexcel con schema_sample_rows=10.000</td>
+              </tr>
+              <tr>
+                <td class="mono">GTFS Red Movilidad (12 TXT)</td>
+                <td>GTFS</td>
+                <td class="num">70 MB</td>
+                <td>126 estaciones Metro, trazados L1–L6 y accesos peatonales</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes-grid">
+      <div class="note-card">
+        <h4>Comparabilidad de tiempo de viaje</h4>
+        <ul>
+          <li>En 2023 la columna <span class="mono">tviaje</span> viene 100% nula (<span class="mono">-</span>) y <span class="mono">tviaje2</span> suma caminata de acceso y egreso, mientras 2019 mide solo tiempo en vehículo.</li>
+          <li>Todas las comparaciones 2019 vs. 2023 usan <span class="mono">EPOCH(t_fin - t_inicio) / 60</span> de forma idéntica.</li>
+        </ul>
+      </div>
+      <div class="note-card">
+        <h4>Rigor causal en fechas L3 y L6</h4>
+        <ul>
+          <li>Línea 6 abrió en nov-2017, Línea 3 en ene-2019 (3 meses antes de abril 2019) y la extensión L3 Quilicura en sep-2023.</li>
+          <li>El DiD 2019→2023 mide maduración de L3; la proyección L7–L9 se entrena sobre variación espacial cross-section 2023.</li>
+        </ul>
+      </div>
+      <div class="note-card">
+        <h4>Alcance de ADATRAP y ML v1 → v2</h4>
+        <ul>
+          <li>ADATRAP observa trazas <span class="mono">bip!</span> + GPS de buses; la proyección L7–L9 es una cota inferior al excluir cambio modal desde automóvil.</li>
+          <li>La iteración v2 añadió <span class="mono">P(Metro Directo | Metro)</span> (AUC 0,962) capturando 65.263 upgrades diarios adicionales.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script src="./app.js"></script>
+</body>
+</html>
