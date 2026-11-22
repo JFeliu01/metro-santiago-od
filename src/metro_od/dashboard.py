@@ -1148,7 +1148,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <div class="callout-warn" style="background:rgba(16,185,129,0.1); border-color:rgba(16,185,129,0.4); color:#a7f3d0;">
-      <b>✅ Cobertura Completa 7 Días vs. 7 Días (44.43 Millones de Viajes sin muestreo):</b> Tras extraer los 6 archivos <code>.rar</code> anidados en 2019, ambos años cubren exactamente <b>7 días completos</b>: <b>Abril 2019 (08–14 Abr, <code>25,837,746</code> viajes)</b> y <b>Abril 2023 (17–23 Abr, <code>18,597,410</code> viajes)</b>, permitiendo paridad exacta en <b>5 días laborales (<code>-28.0%</code>)</b>, <b>Sábado (<code>-28.3%</code>)</b> y <b>Domingo (<code>-27.3%</code>)</b>.
+      <b>✅ Cobertura Completa 7 Días vs. 7 Días (44.43 Millones de Viajes sin muestreo):</b> Ambos años cubren exactamente <b>7 días completos</b>: <b>Abril 2019 (08–14 Abr, <code>25,837,746</code> viajes)</b> y <b>Abril 2023 (17–23 Abr, <code>18,597,410</code> viajes)</b>, permitiendo paridad exacta en <b>5 días laborales (<code>-28.0%</code>)</b>, <b>Sábado (<code>-28.3%</code>)</b> y <b>Domingo (<code>-27.3%</code>)</b>.
     </div>
 
     <div class="eda-grid">
@@ -1173,7 +1173,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               <tr><th>Tabla / Fuente</th><th>Año</th><th>Tamaño</th><th>Cols</th><th>Observaciones de Limpieza</th></tr>
             </thead>
             <tbody>
-              <tr><td><b>viajes20190408_transparencia.csv</b></td><td>2019</td><td>2.25 GB</td><td>107</td><td>Delimitador <code>;</code>, 1 día laboral (4.46M filas), comunas truncadas a 8 chars (<code>LA FLORI</code>).</td></tr>
+              <tr><td><b>viajes201904*.csv (7 archivos)</b></td><td>2019</td><td>12.9 GB</td><td>107</td><td>Delimitador <code>;</code>, 7 días completos (25.84M filas), comunas truncadas a 8 chars (<code>LA FLORI</code>).</td></tr>
               <tr><td><b>etapas20190408_transparencia.csv</b></td><td>2019</td><td>1.31 GB</td><td>29</td><td>Coordenadas UTM 19S (metros) para Bus y Metro; nulos como <code>-</code>.</td></tr>
               <tr><td><b>viajes_042023_17al23.csv</b></td><td>2023</td><td>7.49 GB</td><td>101</td><td>Delimitador <code>,</code> + coma final (<code>Unnamed: 100</code>), 7 días (18.6M filas), códigos enteros + <code>id_tarjeta</code>.</td></tr>
               <tr><td><b>etapas_042023_17al23.csv</b></td><td>2023</td><td>9.41 GB</td><td>32</td><td>UTF-8 BOM, CRS mezclado: Bus en UTM (m) y Metro en WGS84 (lat/lon) en la misma columna.</td></tr>
